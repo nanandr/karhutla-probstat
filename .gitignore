@@ -1,4 +1,28 @@
-.Rproj.user
+# R / RStudio
 .Rhistory
 .RData
 .Ruserdata
+.Rproj.user/
+
+# Data files (raw data, processed RDS/CSV/Parquet)
+data/
+*.rds
+*.csv
+*.parquet
+*.dat
+
+# Environment / Secrets / Configs
+.env
+*.env
+config.yml
+secrets.json
+
+# Renv library (package cache should be rebuilt via renv.lock, not committed)
+renv/library/
+renv/staging/
+
+# OS generated files
+Thumbs.db
+Desktop.ini
+$RECYCLE.BIN/
+.DS_Store

@@ -1,0 +1,156 @@
+/* www/styles.css
+   Gaya tambahan antarmuka Dashboard Kualitas Udara dan Karhutla Kalimantan
+   Berbasis Bootstrap 5 (bslib), palet korporat terstandardisasi, dan tanpa ketergantungan CDN eksternal. */
+
+:root {
+  --primary-color: #1F3A5F;
+  --primary-dark: #142640;
+  --bg-page: #F5F7FA;
+  --card-bg: #FFFFFF;
+  --text-main: #1B2733;
+  --text-muted: #5A6A80;
+  --border-subtle: #E2E8F0;
+  --fire-gold: #FFB703;
+  --fire-orange: #FB8500;
+  --fire-red: #D00000;
+}
+
+body {
+  font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Helvetica, Arial, sans-serif, "Apple Color Emoji", "Segoe UI Emoji";
+  background-color: var(--bg-page);
+  color: var(--text-main);
+  -webkit-font-smoothing: antialiased;
+}
+
+/* Banner Peringatan Data Contoh */
+.banner-data-contoh {
+  background-color: #FEF3C7;
+  border-bottom: 2px solid #F59E0B;
+  color: #92400E;
+  padding: 10px 18px;
+  font-size: 0.88rem;
+  box-shadow: 0 2px 4px rgba(245, 158, 11, 0.1);
+  margin-bottom: 12px;
+  border-radius: 6px;
+}
+
+/* Navigasi dan Judul */
+.navbar-brand, .sidebar-title {
+  color: var(--primary-color) !important;
+  font-weight: 700;
+}
+
+.nav-tabs .nav-link {
+  color: var(--text-muted);
+  font-weight: 500;
+  border: none;
+  border-bottom: 3px solid transparent;
+  padding: 10px 16px;
+  transition: all 0.2s ease-in-out;
+}
+
+.nav-tabs .nav-link:hover {
+  color: var(--primary-color);
+  background-color: rgba(31, 58, 95, 0.04);
+}
+
+.nav-tabs .nav-link.active {
+  color: var(--primary-color) !important;
+  font-weight: 600;
+  border-bottom: 3px solid var(--primary-color) !important;
+  background-color: transparent !important;
+}
+
+/* Kartu dan Kontainer */
+.card {
+  border: 1px solid var(--border-subtle);
+  border-radius: 8px;
+  box-shadow: 0 1px 3px rgba(0, 0, 0, 0.05);
+  background-color: var(--card-bg);
+  margin-bottom: 1rem;
+}
+
+.card-header {
+  background-color: #FFFFFF;
+  border-bottom: 1px solid var(--border-subtle);
+  font-weight: 600;
+  color: var(--primary-color);
+  padding: 12px 18px;
+}
+
+/* Kartu Interpretasi Statistik */
+.kartu-interpretasi {
+  border-radius: 6px;
+  padding: 12px 16px;
+  margin: 12px 0;
+  transition: box-shadow 0.2s ease;
+}
+
+.kartu-interpretasi-info {
+  background-color: #F0F4F8;
+  border-left: 4px solid var(--primary-color);
+}
+
+.kartu-interpretasi-warning {
+  background-color: #FFFBEB;
+  border-left: 4px solid #D97706;
+}
+
+.kartu-interpretasi-success {
+  background-color: #F0FDF4;
+  border-left: 4px solid #16A34A;
+}
+
+/* Value Boxes KPI */
+.bslib-value-box {
+  border-radius: 8px !important;
+  border: 1px solid var(--border-subtle) !important;
+  box-shadow: 0 1px 3px rgba(0, 0, 0, 0.04) !important;
+  transition: transform 0.15s ease, box-shadow 0.15s ease;
+}
+
+.bslib-value-box:hover {
+  transform: translateY(-2px);
+  box-shadow: 0 4px 10px rgba(0, 0, 0, 0.08) !important;
+}
+
+/* Badge Kategori AQI */
+.aqi-badge {
+  display: inline-block;
+  letter-spacing: 0.02em;
+  font-size: 0.82rem;
+  border: 1px solid rgba(0, 0, 0, 0.08);
+}
+
+/* Tabel Responsif */
+.table-responsive-wrapper {
+  overflow-x: auto;
+  -webkit-overflow-scrolling: touch;
+}
+
+.table th {
+  color: var(--primary-color);
+  font-weight: 600;
+  background-color: #F8FAFC;
+}
+
+/* Footer Atribusi */
+.footer-atribusi {
+  background-color: #F8FAFC;
+  border-top: 1px solid var(--border-subtle);
+  padding: 14px 20px;
+  border-radius: 6px;
+  font-size: 0.84rem;
+  color: var(--text-muted);
+}
+
+/* Notifikasi Keadaan Kosong (Empty State) */
+.empty-state-card {
+  padding: 40px 20px;
+  text-align: center;
+  background-color: #F8FAFC;
+  border: 2px dashed #CBD5E1;
+  border-radius: 8px;
+  color: #64748B;
+  margin: 15px 0;
+}
