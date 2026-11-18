@@ -747,10 +747,10 @@ server <- function(input, output, session) {
     }
     
     m <- leaflet() |>
-      addProviderTiles(providers$CartoDB.Positron) |>
+      addProviderTiles(providers$OpenStreetMap.Mapnik) |>
       setView(lng = coord$lon, lat = coord$lat, zoom = coord$zoom) |>
       # Marker Pusat Stasiun Kota
-      addCircleMarker(
+      addCircleMarkers(
         lng = coord$lon,
         lat = coord$lat,
         radius = 8,
