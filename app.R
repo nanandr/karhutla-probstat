@@ -626,7 +626,7 @@ server <- function(input, output, session) {
       yaxis = "y2",
       marker = list(color = "rgba(251, 133, 0, 0.45)", line = list(color = "#FB8500", width = 1)),
       hoverinfo = "text",
-      text = ~sprintf("<b>%s</b><br>%s: %s", format(tanggal, "%%d %%b %%Y"), label_api, format_id(api_nilai, 1))
+      text = ~sprintf("<b>%s</b><br>%s: %s", format(tanggal, "%d %b %Y"), label_api, format_id(api_nilai, 1))
     )
     
     # Sumbu Primer: Garis AQI PM2.5 Harian
@@ -637,7 +637,7 @@ server <- function(input, output, session) {
       marker = list(color = "#1F3A5F", size = 4),
       mode = "lines+markers",
       hoverinfo = "text",
-      text = ~sprintf("<b>%s</b><br>AQI PM2,5: %s (%s)", format(tanggal, "%%d %%b %%Y"), format_id(pm25, 1), sapply(pm25, get_kategori_aqi))
+      text = ~sprintf("<b>%s</b><br>AQI PM2,5: %s (%s)", format(tanggal, "%d %b %Y"), format_id(pm25, 1), sapply(pm25, get_kategori_aqi))
     )
     
     # Sumbu Primer: Garis Rata-rata Bergerak
@@ -778,7 +778,7 @@ server <- function(input, output, session) {
       
       popup_teks <- sprintf(
         "<strong>Piksel Panas Satelit</strong><br>Tanggal: %s<br>FRP: %s MW<br>Confidence: %s<br>Koordinat: %.3f, %.3f",
-        format(pts_sub$tanggal, "%%d %%b %%Y"),
+        format(pts_sub$tanggal, "%d %b %Y"),
         format_id(pts_sub$frp, 1),
         ifelse(pts_sub$confidence == "h", "Tinggi", ifelse(pts_sub$confidence == "n", "Nominal", "Rendah")),
         pts_sub$latitude, pts_sub$longitude
@@ -898,7 +898,7 @@ server <- function(input, output, session) {
         line = list(color = "#0F172A", width = 0.5)
       ),
       hoverinfo = "text",
-      text = ~sprintf("<b>%s</b><br>%s: %s<br>AQI PM2,5: %s", format(tanggal, "%%d %%b"), label_api, format_id(api_lag, 1), format_id(pm25, 1))
+      text = ~sprintf("<b>%s</b><br>%s: %s<br>AQI PM2,5: %s", format(tanggal, "%d %b"), label_api, format_id(api_lag, 1), format_id(pm25, 1))
     )
     
     # Garis tren regresi linear sederhana untuk visualisasi asosiasi
