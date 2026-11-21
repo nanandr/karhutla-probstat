@@ -22,7 +22,7 @@ Buat **antarmuka (UI) dashboard** untuk aplikasi analisis hubungan kebakaran hut
 | Satu halaman dengan 4 area | Sidebar filter + baris KPI + 7 tab (lihat bagian 7) |
 | Tanpa tanda bahwa data palsu | **Banner "DATA CONTOH" wajib** selama memakai dummy |
 | Kategori AQI 4 jenis | 6 kategori AQI US EPA |
-| Hosting bebas | Hanya server lokal (data aqicn tidak boleh dipublikasikan) |
+| Hosting bebas | Hanya server lokal (integrasi Open-Meteo & NASA FIRMS) |
 
 ## 3. Aturan Keras
 
@@ -95,15 +95,37 @@ ambil_analisis <- function() {
 | --- | --- | --- |
 | `kota` | teks | Palangkaraya, Pontianak, Bandung |
 | `tanggal` | Date | Tanggal harian |
-| `pm25` | angka | **AQI PM2,5** (skala US EPA), bukan µg/m³ |
+| `pm25` | angka | **AQI PM2,5** (skala US EPA), bukan µg/m³ (tersedia juga `pm25_ugm3`) |
+| `pm10` | angka | Konsentrasi PM10 (µg/m³) |
 | `n_stasiun` | integer | Jumlah stasiun |
-| `sumber` | teks | `aqicn`, `CAMS`, atau `contoh` |
+| `sumber` | teks | `open-meteo` atau `contoh` |
 | `hujan_mm`, `suhu_c`, `angin_maks` | angka | Cuaca harian |
 | `titik_panas` | integer | Jumlah piksel panas dalam radius 100 km dari pusat kota |
 | `frp_total` | angka | Total FRP (MW) dalam radius yang sama |
 | `batas_ekstrem`, `outlier` | angka, logika | Penanda nilai ekstrem (tidak dibuang) |
 
 **`hotspots`**: `tanggal`, `latitude`, `longitude`, `confidence` (`l`, `n`, `h`), `frp`.
+
+### Mengunduh data nyata kualitas udara Open-Meteo
+
+Data kualitas udara (PM2.5 dan PM10) diunduh secara langsung dari **Open-Meteo Air Quality API** tanpa memerlukan API key (gratis / akses publik terbuka):
+- Endpoint contoh: `https://air-quality-api.open-meteo.com/v1/air-quality?latitude=-0.0319&longitude=109.325&hourly=pm10,pm2_5&start_date=2026-10-01&end_date=2026-10-31`
+- Koordinat acuan stasiun:
+  - **Bandung**: `-6.9222, 107.6069`
+  - **Pontianak**: `-0.0319, 109.3250`
+  - **Palangka Raya**: `-2.2083, 113.9167`
+
+Untuk mengunduh kualitas udara untuk seluruh kota pada rentang tanggal tertentu:
+
+```r
+source("R/dummy_data.R")
+source("R/data_source.R")
+unduh_kualitas_udara_open_meteo("2026-10-01", "2026-10-31")
+# Atau gunakan alias singkat:
+# unduh_kualitas_udara("2026-10-01", "2026-10-31")
+```
+
+Hasil disimpan ke `data/kualitas_udara.rds` (atau `data/data_harian.rds`). Fungsi ini otomatis mengunduh deret waktu per jam (`hourly=pm10,pm2_5`) untuk semua kota, mengagregasikannya ke rata-rata harian, serta menghitung AQI PM2.5 standar US EPA.
 
 ### Mengunduh data nyata NASA FIRMS
 
@@ -248,16 +270,22 @@ Untuk `plot_diag` dan `plot_acf` pada mockup, boleh menjalankan `lm()` sederhana
 | Teks utama | `#1B2733` |
 | Titik panas (gradasi) | `#FFB703` → `#FB8500` → `#D00000` |
 
-**Kategori AQI (PAK, skala US EPA)**
+**Kategori AQI dan Tabel Breakpoint Resmi (Standar US EPA / EPA-454/B-18-007)**
 
-| Kategori | Rentang AQI | Warna |
-| --- | --- | --- |
-| Baik | 0–50 | `#00E400` |
-| Sedang | 51–100 | `#FFFF00` |
-| Tidak sehat (sensitif) | 101–150 | `#FF7E00` |
-| Tidak sehat | 151–200 | `#FF0000` |
-| Sangat tidak sehat | 201–300 | `#8F3F97` |
-| Berbahaya | di atas 300 | `#7E0023` |
+| Kategori | Rentang AQI | PM2.5 24-jam (µg/m³) | PM10 24-jam (µg/m³) | Warna | Kode HEX |
+| :--- | :--- | :--- | :--- | :--- | :--- |
+| **Baik** | 0–50 | 0.0 – 12.0 | 0 – 54 | Hijau | `#00E400` |
+| **Sedang** | 51–100 | 12.1 – 35.4 | 55 – 154 | Kuning | `#FFFF00` |
+| **Tidak Sehat (Sensitif)** | 101–150 | 35.5 – 55.4 | 155 – 254 | Oranye | `#FF7E00` |
+| **Tidak Sehat** | 151–200 | 55.5 – 150.4 | 255 – 354 | Merah | `#FF0000` |
+| **Sangat Tidak Sehat** | 201–300 | 150.5 – 250.4 | 355 – 424 | Ungu | `#8F3F97` |
+| **Berbahaya** | 301–500+ | 250.5 – 500.4+ | 425 – 604+ | Marun | `#7E0023` |
+
+Rumus interpolasi linier baku US EPA:
+$$I = \frac{I_{Hi} - I_{Lo}}{BP_{Hi} - BP_{Lo}} \times (C - BP_{Lo}) + I_{Lo}$$
+- Konsentrasi PM2.5 dipotong (*truncated*) ke 1 desimal sebelum pencocokan breakpoint.
+- Nilai AQI dibulatkan ke bilangan bulat terdekat (*rounded integer*).
+- Untuk konsentrasi ekstrem melampaui $500.4\ \mu g/m^3$ pada puncak karhutla, diterapkan ekstrapolasi linier berkelanjutan.
 
 Teks di atas warna kuning harus gelap, dan di atas ungu atau marun harus putih.
 
@@ -273,7 +301,7 @@ Teks di atas warna kuning harus gelap, dan di atas ungu atau marun harus putih.
 
 Footer statis di semua tab:
 
-> Sumber data kualitas udara: stasiun BMKG melalui WAQI (aqicn.org), **belum terverifikasi**. Titik panas: NASA FIRMS. Cuaca: Open-Meteo. Hasil menunjukkan asosiasi statistik, bukan sebab-akibat.
+> Sumber data kualitas udara: Open-Meteo Air Quality API (reanalisis model CAMS/SILAM). Titik panas: NASA FIRMS. Cuaca: Open-Meteo Historical Weather API. Hasil menunjukkan asosiasi statistik, bukan sebab-akibat.
 
 Tambahan wajib:
 

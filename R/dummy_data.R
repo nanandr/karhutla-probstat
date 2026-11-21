@@ -6,7 +6,7 @@ library(dplyr)
 library(tibble)
 
 # Indikator data contoh: ubah ke FALSE saat beralih ke data nyata
-DATA_CONTOH <- TRUE
+DATA_CONTOH <- FALSE
 HOTSPOTS_CONTOH <- FALSE 
 
 #' Generator Data Harian Contoh per Kota

@@ -101,7 +101,7 @@ ui <- page_sidebar(
       class = "small text-muted",
       tags$p(class = "mb-1", tags$strong("Status Snapshot:"), " Data dibekukan: 31 Okt 2026"),
       tags$p(class = "mb-1", tags$strong("Lingkup Sensor:"), " Radius 100 km dari stasiun"),
-      tags$p(class = "mb-0", tags$strong("Atribusi:"), " BMKG/WAQI, NASA FIRMS, Open-Meteo")
+      tags$p(class = "mb-0", tags$strong("Atribusi:"), " Open-Meteo, NASA FIRMS")
     )
   ),
   
@@ -1194,9 +1194,8 @@ server <- function(input, output, session) {
         tags$ul(
           tags$li(
             tags$strong("Kualitas Udara: "),
-            "Diperoleh dari stasiun BMKG melalui jejaring integrasi WAQI (aqicn.org). Metrik yang digunakan adalah ",
-            tags$strong("AQI PM2,5 skala US EPA"), " (0–500), bukan konsentrasi massa mentah dalam µg/m³. Data ini bersumber langsung dari instrumen lapangan dan berstatus ",
-            tags$em("belum terverifikasi"), " melalui proses baku kendali mutu laboratorium BMKG."
+            "Diperoleh dari Open-Meteo Air Quality API (reanalisis model atmosfer CAMS/SILAM). Parameter yang dipantau mencakup konsentrasi PM2,5 dan PM10 (µg/m³) serta ",
+            tags$strong("AQI PM2,5 skala US EPA"), " (0–500) yang diagregasikan ke rata-rata harian."
           ),
           tags$li(
             tags$strong("Titik Panas Satelit: "),

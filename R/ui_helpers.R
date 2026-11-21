@@ -202,7 +202,7 @@ footer_atribusi <- function() {
       class = "container-fluid px-0",
       tags$p(
         class = "mb-1 small",
-        HTML("<strong>Sumber Data:</strong> Kualitas udara dari stasiun BMKG melalui WAQI (aqicn.org), <em>belum terverifikasi</em>. Titik panas dari NASA FIRMS (sensor MODIS/VIIRS). Cuaca harian dari Open-Meteo.")
+        HTML("<strong>Sumber Data:</strong> Kualitas udara dari Open-Meteo Air Quality API. Titik panas dari NASA FIRMS (sensor MODIS/VIIRS). Cuaca harian dari Open-Meteo.")
       ),
       tags$p(
         class = "mb-0 small text-secondary",
@@ -215,9 +215,10 @@ footer_atribusi <- function() {
 #' Koordinat Pusat Kota untuk Peta Leaflet
 get_koordinat_kota <- function(kota) {
   coords <- list(
-    "Palangkaraya" = list(lat = -2.2096, lon = 113.9213, zoom = 9),
-    "Pontianak"    = list(lat = -0.0263, lon = 109.3425, zoom = 9),
-    "Bandung"      = list(lat = -6.9175, lon = 107.6191, zoom = 9)
+    "Palangkaraya"  = list(lat = -2.2083, lon = 113.9167, zoom = 9),
+    "Palangka Raya" = list(lat = -2.2083, lon = 113.9167, zoom = 9),
+    "Pontianak"     = list(lat = -0.0319, lon = 109.3250, zoom = 9),
+    "Bandung"       = list(lat = -6.9222, lon = 107.6069, zoom = 9)
   )
   if (kota %in% names(coords)) coords[[kota]] else coords[["Palangkaraya"]]
 }
