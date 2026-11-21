@@ -12,7 +12,7 @@ library(leaflet)
 library(DT)
 
 # 1. Muat Seluruh Skrip di Folder R/
-# Termasuk dummy_data.R, data_source.R, ui_helpers.R, dan berkas analisis statistik bila ada
+# Termasuk dummy_data.R, data_source.R, ui_helpers.R, analisis_hubungan.R, dan berkas analisis lainnya
 for (f in list.files("R", pattern = "[.]R$", full.names = TRUE)) {
   source(f)
 }
@@ -626,7 +626,7 @@ server <- function(input, output, session) {
       yaxis = "y2",
       marker = list(color = "rgba(251, 133, 0, 0.45)", line = list(color = "#FB8500", width = 1)),
       hoverinfo = "text",
-      text = ~sprintf("<b>%s</b><br>%s: %s", format(tanggal, "%%d %%b %%Y"), label_api, format_id(api_nilai, 1))
+      text = ~sprintf("<b>%s</b><br>%s: %s", format(tanggal, "%d %b %Y"), label_api, format_id(api_nilai, 1))
     )
     
     # Sumbu Primer: Garis AQI PM2.5 Harian
@@ -637,7 +637,7 @@ server <- function(input, output, session) {
       marker = list(color = "#1F3A5F", size = 4),
       mode = "lines+markers",
       hoverinfo = "text",
-      text = ~sprintf("<b>%s</b><br>AQI PM2,5: %s (%s)", format(tanggal, "%%d %%b %%Y"), format_id(pm25, 1), sapply(pm25, get_kategori_aqi))
+      text = ~sprintf("<b>%s</b><br>AQI PM2,5: %s (%s)", format(tanggal, "%d %b %Y"), format_id(pm25, 1), sapply(pm25, get_kategori_aqi))
     )
     
     # Sumbu Primer: Garis Rata-rata Bergerak
@@ -747,10 +747,10 @@ server <- function(input, output, session) {
     }
     
     m <- leaflet() |>
-      addProviderTiles(providers$CartoDB.Positron) |>
+      addProviderTiles(providers$OpenStreetMap.Mapnik) |>
       setView(lng = coord$lon, lat = coord$lat, zoom = coord$zoom) |>
       # Marker Pusat Stasiun Kota
-      addCircleMarker(
+      addCircleMarkers(
         lng = coord$lon,
         lat = coord$lat,
         radius = 8,
@@ -778,7 +778,7 @@ server <- function(input, output, session) {
       
       popup_teks <- sprintf(
         "<strong>Piksel Panas Satelit</strong><br>Tanggal: %s<br>FRP: %s MW<br>Confidence: %s<br>Koordinat: %.3f, %.3f",
-        format(pts_sub$tanggal, "%%d %%b %%Y"),
+        format(pts_sub$tanggal, "%d %b %Y"),
         format_id(pts_sub$frp, 1),
         ifelse(pts_sub$confidence == "h", "Tinggi", ifelse(pts_sub$confidence == "n", "Nominal", "Rendah")),
         pts_sub$latitude, pts_sub$longitude
@@ -801,15 +801,25 @@ server <- function(input, output, session) {
     m
   })
   
-  # --- TAB 4: HUBUNGAN ---
+  # --- TAB 4: HUBUNGAN (REAKTIF & DINAMIS) ---
+  
+  # Reactive perhitungan korelasi lag (0-7 hari) dan korelasi parsial
+  hasil_hubungan <- reactive({
+    df <- data_terfilter()
+    validate(need(nrow(df) >= 8, "Data terlalu sedikit untuk menghitung korelasi lag."))
+    
+    df_lag <- hitung_korelasi_lag(df, max_lag = 7)
+    parsial <- hitung_korelasi_parsial(df, lag_n = input$lag_api)
+    
+    list(df_lag = df_lag, parsial = parsial)
+  })
   
   # Output: plot_lag (Bar Chart Korelasi Spearman per Lag Waktu)
   output$plot_lag <- renderPlotly({
-    analisis <- ambil_analisis()
-    df_lag <- analisis$korelasi_lag
+    df_lag <- hasil_hubungan()$df_lag
     
-    # Warna penanda: lag 2 disorot sebagai asosiasi puncak
-    warna_bars <- ifelse(df_lag$lag == 2, "#1F3A5F", "#94A3B8")
+    # Sorot bar yang sesuai dengan slider lag_api pengguna
+    warna_bars <- ifelse(df_lag$lag == input$lag_api, "#1F3A5F", "#94A3B8")
     
     p <- plot_ly(df_lag, x = ~factor(lag)) |>
       add_bars(
@@ -826,13 +836,16 @@ server <- function(input, output, session) {
         hoverinfo = "text",
         text = ~sprintf(
           "<b>Lag %d Hari</b><br>Spearman rho: %s<br>95%% CI: [%s, %s]<br>p-value: %s",
-          lag, format_id(rho, 2), format_id(ci_bawah, 2), format_id(ci_atas, 2),
-          if (p < 0.001) "< 0,001" else format_id(p, 4)
+          lag,
+          format_id(rho, 2),
+          format_id(ci_bawah, 2),
+          format_id(ci_atas, 2),
+          ifelse(is.na(p), "-", ifelse(p < 0.001, "< 0,001", format_id(p, 4)))
         )
       ) |>
       layout(
         xaxis = list(title = "Lag Waktu (Hari)"),
-        yaxis = list(title = "Koefisien Korelasi Spearman (rho)", range = c(0, 0.85)),
+        yaxis = list(title = "Koefisien Korelasi Spearman (rho)", range = c(-0.2, 1.0)),
         margin = list(t = 20, b = 40, l = 50, r = 20),
         plot_bgcolor = "#FFFFFF",
         paper_bgcolor = "#FFFFFF"
@@ -842,31 +855,54 @@ server <- function(input, output, session) {
     p
   })
   
-  # Output: tafsir_lag (Kartu Interpretasi Korelasi Lag)
+  # Output: tafsir_lag (Kartu Interpretasi Korelasi Lag Dinamis)
   output$tafsir_lag <- renderUI({
-    analisis <- ambil_analisis()
+    df_lag <- hasil_hubungan()$df_lag |> filter(!is.na(rho))
+    validate(need(nrow(df_lag) > 0, ""))
+    
+    puncak <- df_lag[which.max(df_lag$rho), ]
+    terpilih <- df_lag |> filter(lag == input$lag_api)
+    
+    teks_lag <- sprintf(
+      "Pada %s, asosiasi tertinggi terdeteksi pada lag %d hari (rho = %s, p %s). Pada lag yang sedang dipilih (%d hari), nilai korelasi Spearman adalah rho = %s (p %s).",
+      input$kota,
+      puncak$lag,
+      format_id(puncak$rho, 2),
+      ifelse(puncak$p < 0.001, "< 0,001", paste0("= ", format_id(puncak$p, 3))),
+      terpilih$lag,
+      format_id(terpilih$rho, 2),
+      ifelse(terpilih$p < 0.001, "< 0,001", paste0("= ", format_id(terpilih$p, 3)))
+    )
+    
     kartu_interpretasi(
-      teks = analisis$tafsir_korelasi,
+      teks = teks_lag,
       tipe = "info",
       judul = "Interpretasi Asosiasi Korelasi Lag"
     )
   })
   
-  # Output: tafsir_parsial (Kartu Interpretasi Korelasi Parsial)
+  # Output: tafsir_parsial (Kartu Interpretasi Korelasi Parsial Dinamis)
   output$tafsir_parsial <- renderUI({
-    analisis <- ambil_analisis()
-    p_data <- analisis$parsial
+    p_data <- hasil_hubungan()$parsial
+    validate(need(!is.na(p_data$rho_parsial), ""))
+    
+    signif_teks <- if (p_data$p_parsial < 0.05 && p_data$rho_parsial > 0) {
+      "tetap bernilai positif dan signifikan secara statistik. Hal ini menunjukkan bahwa asosiasi antara ukuran kebakaran dan penurunan kualitas udara bersifat kokoh dan tidak semata-mata dipicu oleh faktor perancu cuaca."
+    } else {
+      "melemah atau tidak signifikan secara statistik setelah variabel cuaca dikontrol, mengindikasikan pengaruh kuat faktor meteorologi (hujan/angin) pada periode atau wilayah ini."
+    }
     
     teks_parsial <- sprintf(
-      "Setelah mengontrol variabel kovariat cuaca (curah hujan dan kecepatan angin) pada lag %d hari, koefisien korelasi parsial tetap bernilai positif (rho parsial = %s, p %s). Hal ini menunjukkan bahwa asosiasi antara ukuran kebakaran dan penurunan kualitas udara bersifat kokoh dan tidak semata-mata dipicu oleh faktor perancu cuaca.",
+      "Setelah mengontrol variabel kovariat cuaca (curah hujan dan kecepatan angin) pada lag %d hari, koefisien korelasi parsial bernilai rho = %s (p %s), sehingga %s",
       p_data$lag,
       format_id(p_data$rho_parsial, 2),
-      if (p_data$p_parsial < 0.001) "< 0,001" else paste0("= ", format_id(p_data$p_parsial, 3))
+      ifelse(p_data$p_parsial < 0.001, "< 0,001", paste0("= ", format_id(p_data$p_parsial, 3))),
+      signif_teks
     )
     
     kartu_interpretasi(
       teks = teks_parsial,
-      tipe = "success",
+      tipe = if (p_data$p_parsial < 0.05 && p_data$rho_parsial > 0) "success" else "warning",
       judul = "Interpretasi Asosiasi Korelasi Parsial (Kontrol Cuaca)"
     )
   })
@@ -898,14 +934,18 @@ server <- function(input, output, session) {
         line = list(color = "#0F172A", width = 0.5)
       ),
       hoverinfo = "text",
-      text = ~sprintf("<b>%s</b><br>%s: %s<br>AQI PM2,5: %s", format(tanggal, "%%d %%b"), label_api, format_id(api_lag, 1), format_id(pm25, 1))
+      text = ~sprintf("<b>%s</b><br>%s: %s<br>AQI PM2,5: %s", format(tanggal, "%d %b"), label_api, format_id(api_lag, 1), format_id(pm25, 1))
     )
     
-    # Garis tren regresi linear sederhana untuk visualisasi asosiasi
-    if (nrow(df_plot) >= 5) {
+    # Garis tren regresi linear sederhana (diurutkan berdasarkan sumbu X)
+    if (nrow(df_plot) >= 5 && sd(df_plot$api_lag) > 0) {
       fit <- lm(pm25 ~ api_lag, data = df_plot)
-      df_plot$y_pred <- predict(fit)
+      df_line <- df_plot |>
+        arrange(api_lag) |>
+        mutate(y_pred = predict(fit, newdata = arrange(df_plot, api_lag)))
+      
       p <- p |> add_lines(
+        data = df_line,
         x = ~api_lag,
         y = ~y_pred,
         line = list(color = "#D00000", width = 2),

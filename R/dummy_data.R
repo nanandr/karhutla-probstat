@@ -7,6 +7,7 @@ library(tibble)
 
 # Indikator data contoh: ubah ke FALSE saat beralih ke data nyata
 DATA_CONTOH <- TRUE
+HOTSPOTS_CONTOH <- FALSE 
 
 #' Generator Data Harian Contoh per Kota
 #' Menghasilkan deret waktu kualitas udara dan cuaca dengan pola puncak karhutla

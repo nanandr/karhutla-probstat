@@ -105,6 +105,23 @@ ambil_analisis <- function() {
 
 **`hotspots`**: `tanggal`, `latitude`, `longitude`, `confidence` (`l`, `n`, `h`), `frp`.
 
+### Mengunduh data nyata NASA FIRMS
+
+Simpan map key di `.Renviron` sebagai `FIRMS_MAP_KEY=...`, lalu restart sesi R.
+Untuk mengunduh titik panas di sekitar kota yang tersedia untuk rentang tanggal tertentu:
+
+```r
+source("R/dummy_data.R")
+source("R/data_source.R")
+unduh_hotspots_firms("2026-07-15", "2026-10-15")
+HOTSPOTS_CONTOH <- FALSE
+```
+
+Hasil disimpan ke `data/hotspots.rds`; `HOTSPOTS_CONTOH <- FALSE` membuat peta
+menggunakan berkas tersebut tanpa mengubah status data harian contoh.
+Pengunduh memakai produk VIIRS Suomi-NPP Standard Processing dan meminta API
+dalam potongan maksimal lima hari.
+
 ### 6.3 Generator data contoh (`R/dummy_data.R`)
 
 Sketsa yang boleh kamu perbaiki agar grafik tampak meyakinkan (puncak kebakaran, lalu turun saat hujan datang):
