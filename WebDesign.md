@@ -8,7 +8,7 @@ Buat **antarmuka (UI) dashboard** untuk aplikasi analisis hubungan kebakaran hut
 
 - **Bahasa dan kerangka:** R dengan Shiny. Bukan React, bukan HTML/JS mentah, bukan Tailwind.
 - **Bentuk aplikasi:** server web lokal. R menyalakan server di komputer pengguna (`http://127.0.0.1:3838`) dan dibuka lewat browser. Tidak ada hosting publik.
-- **Fokus pekerjaanmu:** tata letak, tata warna, tabel, grafik, peta, dan teks interpretasi. **Jangan** membuat integrasi API atau logika statistik sungguhan. Semua angka berasal dari data contoh (dummy) yang diisolasi rapi dan mudah diganti data nyata.
+- **Fokus pekerjaanmu:** tata letak, tata warna, tabel, grafik, peta, dan teks interpretasi. **Jangan** membuat integrasi API atau logika statistik sungguhan. Data harian dan analisis memakai data contoh; hotspot memakai snapshot NASA FIRMS melalui adaptor.
 
 ## 2. Perubahan dari Versi Sebelumnya
 
@@ -28,8 +28,8 @@ Buat **antarmuka (UI) dashboard** untuk aplikasi analisis hubungan kebakaran hut
 
 **Wajib**
 
-1. Seluruh kode dalam **R**. Satu-satunya berkas non-R yang boleh ada adalah `www/styles.css`.
-2. Semua data UI berasal dari `R/dummy_data.R` lewat **fungsi adaptor** (bagian 6). Komponen UI tidak boleh membaca objek dummy langsung dan tidak boleh berisi angka atau teks data yang ditulis manual.
+1. Kode aplikasi dalam **R**. `www/styles.css` untuk gaya UI; skrip PowerShell hanya untuk memasang jadwal refresh Windows.
+2. Semua data UI berasal dari fungsi adaptor di `R/data_source.R`. Komponen UI tidak boleh membaca objek dummy langsung. Data harian contoh dan hotspot FIRMS dipilih secara terpisah melalui `DATA_CONTOH` dan `HOTSPOTS_CONTOH`.
 3. Selama `DATA_CONTOH <- TRUE`, tampilkan banner di bagian atas: **"DATA CONTOH (bukan data sebenarnya)"**, dan beri keterangan yang sama pada setiap tangkapan layar.
 4. Semua teks interpretasi memakai kata **"asosiasi"**, bukan "penyebab" atau "akibat".
 5. Titik panas dijelaskan sebagai **piksel satelit yang terdeteksi panas**, bukan jumlah kebakaran dan bukan luas area terbakar.
@@ -58,8 +58,11 @@ karhutla-udara/
 ├── app.R              # UI + server
 ├── R/
 │   ├── dummy_data.R   # SEMUA data contoh (satu-satunya tempat)
-│   ├── data_source.R  # fungsi adaptor: dummy sekarang, data nyata nanti
+│   ├── data_source.R  # adaptor data serta refresh hotspot FIRMS
 │   └── ui_helpers.R   # komponen UI berulang (kartu interpretasi, badge, dst.)
+├── scripts/
+│   ├── refresh_hotspots.R          # worker unduhan harian
+│   └── install_hotspot_schedule.ps1 # pemasang Windows Task Scheduler
 └── www/
     └── styles.css     # CSS tambahan yang kecil
 ```
@@ -78,7 +81,7 @@ ambil_data_harian <- function() {
   if (DATA_CONTOH) DUMMY_HARIAN else readRDS('data/data_harian.rds')
 }
 ambil_hotspots <- function() {
-  if (DATA_CONTOH) DUMMY_HOTSPOTS else readRDS('data/hotspots.rds')
+  if (HOTSPOTS_CONTOH) DUMMY_HOTSPOTS else readRDS('data/hotspots.rds')
 }
 ambil_analisis <- function() {
   # Hasil statistik statis untuk mockup. Pada versi penuh, bagian ini dihapus
@@ -135,14 +138,24 @@ Untuk mengunduh titik panas di sekitar kota yang tersedia untuk rentang tanggal 
 ```r
 source("R/dummy_data.R")
 source("R/data_source.R")
-unduh_hotspots_firms("2026-07-15", "2026-10-15")
+unduh_hotspots_firms(
+  "2026-07-15",
+  "2026-10-15",
+  produk = "VIIRS_NOAA20_SP"
+)
 HOTSPOTS_CONTOH <- FALSE
 ```
 
 Hasil disimpan ke `data/hotspots.rds`; `HOTSPOTS_CONTOH <- FALSE` membuat peta
-menggunakan berkas tersebut tanpa mengubah status data harian contoh.
-Pengunduh memakai produk VIIRS Suomi-NPP Standard Processing dan meminta API
-dalam potongan maksimal lima hari.
+dan KPI hotspot memakai berkas tersebut tanpa mengubah status data harian contoh.
+Worker membaca availability NASA FIRMS dan memadukan produk Standard Processing
+serta NRT untuk Suomi-NPP, NOAA-20, dan NOAA-21 tanpa overlap tanggal dalam
+produk masing-masing satelit. Pembaruan harian meninjau ulang tujuh hari terakhir
+dan melakukan backfill hingga 180 hari saat produk belum memiliki progres.
+Produk NRT dimulai setelah tanggal akhir Standard Processing yang tersedia.
+Area API membatasi setiap permintaan maksimal lima hari. Jalankan
+`scripts/install_hotspot_schedule.ps1` sekali untuk memasang jadwal Windows
+pukul 06:00; aplikasi juga memeriksa pembaruan saat dibuka.
 
 ### 6.3 Generator data contoh (`R/dummy_data.R`)
 
@@ -244,7 +257,7 @@ Empat `value_box()` yang dihitung dari data terfilter:
 | --- | --- | --- |
 | **1. Ringkasan** | Tabel statistik deskriptif (n, hilang, rata-rata, median, sd, min, Q1, Q3, maks, skewness); bar chart proporsi hari per kategori AQI (6 kategori, warna EPA); tabel Shapiro-Wilk dengan kolom Normal (Ya/Tidak) | `tbl_desk`, `plot_kategori`, `tbl_norm` |
 | **2. Tren** | Grafik `plotly` dua sumbu: garis AQI PM2,5 (kiri), **bar** ukuran kebakaran (kanan, sumbu sekunder), garis putus-putus rata-rata bergerak; garis acuan horizontal pada AQI 100 dan 150 | `plot_tren` |
-| **3. Peta Titik Panas** | Peta `leaflet`: lingkaran kecil berukuran menurut FRP, warna menurut confidence (tinggi = merah tua, nominal = oranye), marker kota dan lingkaran radius 100 km; teks jumlah titik; catatan "satu titik = satu piksel satelit, bukan satu kebakaran" | `n_titik`, `peta` |
+| **3. Peta Titik Panas** | Peta `leaflet`: hingga 2.000 deteksi ditampilkan pada koordinat aslinya; data yang lebih besar diringkas menjadi petak sekitar 4 km dengan kategori kepadatan, tanpa angka per petak; marker kota, lingkaran batas radius, dan legenda kategori | `n_titik`, `peta` |
 | **4. Hubungan** | Bar chart korelasi Spearman per lag 0–7 dengan selang kepercayaan; kartu interpretasi korelasi; kartu interpretasi korelasi parsial; scatter plot ukuran kebakaran vs AQI | `plot_lag`, `tafsir_lag`, `tafsir_parsial`, `scatter` |
 | **5. Perbandingan** | Input `periode_api` (rentang periode karhutla); kartu Mann–Whitney U (tabel ringkas, tabel normalitas, kalimat kesimpulan); kartu Kruskal–Wallis + tabel Dunn (`DT`); kartu Chi-square (tabel persen baris, kalimat kesimpulan) | `ringkas_uji`, `tbl_norm_periode`, `tafsir_mw`, `tafsir_kw`, `tbl_dunn`, `tbl_chisq`, `tafsir_chisq` |
 | **6. Regresi** | Cek ukuran sampel; tabel hierarchical regression (R² blok 1, blok 2, ΔR², F, p); tabel koefisien dan koefisien HAC; **badge uji asumsi** (hijau "Terpenuhi", merah "Tidak terpenuhi") untuk normalitas residual, linearitas, autokorelasi, heteroskedastisitas; tabel VIF dan tolerance; teks outlier dan Cook's D; empat grafik diagnostik dan ACF residual | `tbl_sampel`, `tbl_hier`, `tbl_koef`, `tbl_hac`, `tbl_asumsi`, `tbl_vif`, `teks_outlier`, `plot_diag`, `plot_acf` |
@@ -306,7 +319,7 @@ Footer statis di semua tab:
 Tambahan wajib:
 
 - Banner "DATA CONTOH" selama `DATA_CONTOH <- TRUE`.
-- Catatan di tab Peta: satu titik panas adalah satu piksel satelit, bukan satu kebakaran.
+- Catatan di tab Peta: angka total menghitung seluruh piksel/deteksi dalam radius 100 km; rentang pendek menampilkan posisi deteksi, sedangkan data banyak diringkas per petak kepadatan sekitar 4 km. Satu piksel bukan satu kebakaran.
 - Tidak ada tombol unduh data mentah kualitas udara.
 
 ## 10. Cara Menjalankan (Server Lokal)
