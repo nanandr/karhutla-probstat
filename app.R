@@ -223,7 +223,7 @@ ui <- page_sidebar(
         tags$div(
           class = "mt-3",
           kartu_interpretasi(
-            teks = "Setiap petak berwarna merangkum jumlah piksel satelit yang terdeteksi panas di area sekitar 4 km; warna menunjukkan kepadatan deteksi. Klik petak untuk melihat jumlahnya. Piksel panas bukan jumlah kebakaran unik dan bukan luas area terbakar. Lingkaran biru menunjukkan radius pengamatan 100 km dari pusat kota.",
+            teks = "Setiap petak berwarna merangkum deteksi panas di area sekitar 4 km. Warna menunjukkan kategori kepadatan: rendah, sedang, tinggi, atau sangat tinggi. Angka total di atas tetap menghitung seluruh piksel dalam radius 100 km. Piksel panas bukan jumlah kebakaran unik dan bukan luas area terbakar. Lingkaran biru menunjukkan radius pengamatan 100 km dari pusat kota.",
             tipe = "warning",
             judul = "Peringatan Interpretasi Sensor Spasial"
           )
@@ -778,7 +778,7 @@ server <- function(input, output, session) {
   output$n_titik <- renderText({
     pts <- hotspots_terfilter()
     sprintf(
-      "Total %s piksel panas dalam radius 100 km dari %s. Peta merangkum deteksi per petak sekitar 4 km; klik petak untuk jumlahnya.",
+      "Total %s piksel panas dalam radius 100 km dari %s. Peta menampilkan kategori kepadatan per petak sekitar 4 km.",
       format_id(nrow(pts), 0),
       input$kota
     )
@@ -840,21 +840,29 @@ server <- function(input, output, session) {
           },
           .groups = "drop"
         )
-      nilai_kepadatan <- log1p(hotspots_ringkas$jumlah)
-      pal_kepadatan <- colorNumeric(
-        palette = c("#FFF7E6", "#FDE0A2", "#F8B866", "#E9824A", "#B9434A"),
-        domain = range(nilai_kepadatan),
-        na.color = "#FFF7E6"
+      hotspots_ringkas$kategori <- cut(
+        hotspots_ringkas$jumlah,
+        breaks = c(-Inf, 10, 50, 200, Inf),
+        labels = c("Rendah", "Sedang", "Tinggi", "Sangat tinggi"),
+        ordered_result = TRUE
       )
-      warna_petakan <- pal_kepadatan(nilai_kepadatan)
+      warna_kategori <- c(
+        "Rendah" = "#FFF2CC",
+        "Sedang" = "#FDBA74",
+        "Tinggi" = "#F97316",
+        "Sangat tinggi" = "#B91C1C"
+      )
+      warna_petakan <- unname(
+        warna_kategori[as.character(hotspots_ringkas$kategori)]
+      )
       
       popup_teks <- sprintf(
         paste0(
           "<strong>Ringkasan hotspot per petak (~4 km)</strong>",
-          "<br>Jumlah piksel/deteksi: %s",
+          "<br>Kepadatan deteksi: %s",
           "<br>Confidence tertinggi: %s"
         ),
-        format_id(hotspots_ringkas$jumlah, 0),
+        as.character(hotspots_ringkas$kategori),
         ifelse(
           hotspots_ringkas$confidence == "h",
           "Tinggi",
@@ -878,18 +886,10 @@ server <- function(input, output, session) {
         ) |>
         addLegend(
           position = "bottomright",
-          pal = pal_kepadatan,
-          values = nilai_kepadatan,
-          title = "Deteksi per petak",
-          labFormat = function(type, cuts, p) {
-            format(
-              round(expm1(cuts)),
-              big.mark = ".",
-              decimal.mark = ",",
-              scientific = FALSE,
-              trim = TRUE
-            )
-          }
+          colors = unname(warna_kategori),
+          labels = names(warna_kategori),
+          title = "Kepadatan deteksi",
+          opacity = 0.78
         )
     }
     
