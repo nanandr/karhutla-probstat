@@ -177,6 +177,12 @@ kartu_interpretasi <- function(teks, tipe = c("info", "warning", "success"), jud
 #' Banner Status Data Contoh (Wajib Tampil jika DATA_CONTOH == TRUE)
 banner_data_contoh <- function() {
   if (exists("DATA_CONTOH") && isTRUE(DATA_CONTOH)) {
+    keterangan_hotspot <- if (exists("HOTSPOTS_CONTOH") && isTRUE(HOTSPOTS_CONTOH)) {
+      "Titik panas juga menggunakan data contoh."
+    } else {
+      "Titik panas bersumber dari NASA FIRMS."
+    }
+
     tags$div(
       class = "banner-data-contoh",
       tags$div(
@@ -184,7 +190,7 @@ banner_data_contoh <- function() {
         tags$div(
           tags$span(class = "badge bg-warning text-dark me-2", "MODE SIMULASI"),
           tags$strong("DATA CONTOH (bukan data sebenarnya)"),
-          tags$span(" — Seluruh angka, parameter, dan grafik saat ini bersumber dari data sintetis terisolasi.")
+          tags$span(" — Data harian dan analisis memakai data sintetis. ", keterangan_hotspot)
         ),
         tags$span(class = "badge bg-secondary-subtle text-secondary small", "Tangkapan Layar: Data Contoh")
       )
