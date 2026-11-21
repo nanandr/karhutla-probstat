@@ -365,46 +365,8 @@ ui <- page_sidebar(
 
 # 4. Logika Server Aplikasi
 server <- function(input, output, session) {
-  
-  # Reactive Data Harian Terfilter Berdasarkan Pilihan Pengguna
-  data_terfilter <- reactive({
-    req(input$kota, input$tgl)
-    
-    # Indikasi proses pemuatan data untuk transisi interaktif yang mulus
-    withProgress(message = "Memperbarui data dan visualisasi...", value = 0.5, {
-      df <- ambil_data_harian()
-      
-      df_sub <- df |>
-        filter(
-          kota == input$kota,
-          tanggal >= input$tgl[1],
-          tanggal <= input$tgl[2]
-        ) |>
-        arrange(tanggal)
-      
-      if (nrow(df_sub) == 0) return(df_sub)
-      
-      # Perhitungan Jendela Rata-rata Bergerak (Moving Average)
-      k <- input$ma_k
-      if (nrow(df_sub) >= k) {
-        ma_vals <- stats::filter(df_sub$pm25, rep(1 / k, k), sides = 1)
-        df_sub$pm25_ma <- as.numeric(ma_vals)
-      } else {
-        df_sub$pm25_ma <- df_sub$pm25
-      }
-      
-      # Penentuan Variabel Ukuran Kebakaran Sesuai Pilihan
-      var_dipilih <- input$var_api
-      df_sub$api_nilai <- if (var_dipilih == "frp_total") df_sub$frp_total else as.numeric(df_sub$titik_panas)
-      
-      # Perhitungan Lag untuk Analisis Bivariat
-      lag_n <- input$lag_api
-      df_sub$api_lag <- dplyr::lag(df_sub$api_nilai, n = lag_n, default = NA)
-      
-      df_sub
-    })
-  })
 
+  # 1. Reactive Polling Snapshot Titik Panas Satelit (NASA FIRMS)
   hotspots_snapshot <- reactivePoll(
     intervalMillis = 60000,
     session = session,
@@ -423,6 +385,7 @@ server <- function(input, output, session) {
     }
   )
 
+  # 2. Reactive Filter Titik Panas Satelit (Rentang Tanggal & Radius 100 km Kota)
   hotspots_terfilter <- reactive({
     req(input$kota, input$tgl)
     pts <- hotspots_snapshot()$data
@@ -445,6 +408,84 @@ server <- function(input, output, session) {
     ))
 
     pts[!is.na(jarak_km) & jarak_km <= 100, , drop = FALSE]
+  })
+  
+  # 3. Reactive Data Harian Terintegrasi (Kualitas Udara + Agregasi Titik Panas Hotspot)
+  data_terfilter <- reactive({
+    req(input$kota, input$tgl)
+    
+    # Indikasi proses pemuatan data untuk transisi interaktif yang mulus
+    withProgress(message = "Memperbarui data dan visualisasi...", value = 0.5, {
+      df <- ambil_data_harian()
+      
+      df_sub <- df |>
+        filter(
+          kota == input$kota,
+          tanggal >= input$tgl[1],
+          tanggal <= input$tgl[2]
+        ) |>
+        arrange(tanggal)
+      
+      # Jika data harian belum tersedia untuk rentang ini, buat kerangka tanggal
+      if (nrow(df_sub) == 0) {
+        semua_tgl <- seq(input$tgl[1], input$tgl[2], by = "day")
+        df_sub <- tibble(
+          kota = input$kota,
+          tanggal = semua_tgl,
+          pm25 = NA_real_,
+          n_stasiun = 0L,
+          sumber = "hotspots",
+          hujan_mm = 0.0,
+          suhu_c = 28.0,
+          angin_maks = 10.0,
+          titik_panas = 0L,
+          frp_total = 0.0
+        )
+      }
+
+      # Tulis dan integrasikan data titik panas nyata dari hotspots_terfilter()
+      pts <- hotspots_terfilter()
+      if (nrow(pts) > 0) {
+        hs_harian <- pts |>
+          dplyr::group_by(tanggal) |>
+          dplyr::summarise(
+            hs_titik = as.integer(dplyr::n()),
+            hs_frp   = round(as.numeric(sum(frp, na.rm = TRUE)), 1),
+            .groups  = "drop"
+          )
+        
+        df_sub <- df_sub |>
+          dplyr::left_join(hs_harian, by = "tanggal") |>
+          dplyr::mutate(
+            titik_panas = as.integer(ifelse(!is.na(hs_titik), hs_titik, 0L)),
+            frp_total   = as.numeric(ifelse(!is.na(hs_frp), hs_frp, 0.0))
+          ) |>
+          dplyr::select(-dplyr::any_of(c("hs_titik", "hs_frp")))
+      } else {
+        # Bila tidak ada titik panas satelit terdeteksi pada rentang ini
+        df_sub$titik_panas <- 0L
+        df_sub$frp_total <- 0.0
+      }
+      
+      # Perhitungan Jendela Rata-rata Bergerak (Moving Average)
+      k <- input$ma_k
+      if (sum(!is.na(df_sub$pm25)) >= k) {
+        ma_vals <- stats::filter(df_sub$pm25, rep(1 / k, k), sides = 1)
+        df_sub$pm25_ma <- as.numeric(ma_vals)
+      } else {
+        df_sub$pm25_ma <- df_sub$pm25
+      }
+      
+      # Penentuan Variabel Ukuran Kebakaran Sesuai Pilihan (Jumlah Piksel atau FRP)
+      var_dipilih <- input$var_api
+      df_sub$api_nilai <- if (var_dipilih == "frp_total") df_sub$frp_total else as.numeric(df_sub$titik_panas)
+      
+      # Perhitungan Lag untuk Analisis Bivariat
+      lag_n <- input$lag_api
+      df_sub$api_lag <- dplyr::lag(df_sub$api_nilai, n = lag_n, default = NA)
+      
+      df_sub
+    })
   })
   
   # --- LOGIKA VALUE BOXES (AREA B) ---
