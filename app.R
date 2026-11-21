@@ -234,19 +234,34 @@ ui <- page_sidebar(
     # Tab 4: Hubungan
     nav_panel(
       title = "4. Hubungan",
-      layout_columns(
-        col_widths = c(6, 6),
+      tags$div(
+        class = "d-flex flex-column gap-3",
         
-        card(
-          card_header("Korelasi Rank Spearman per Lag Waktu (0–7 Hari)"),
-          plotlyOutput("plot_lag", height = "340px"),
-          uiOutput("tafsir_lag")
+        layout_columns(
+          col_widths = c(6, 6),
+          fill = FALSE,
+          
+          card(
+            card_header("Korelasi Rank Spearman per Lag Waktu (0–7 Hari)"),
+            p(class = "text-muted small mb-1", "Klik batang pada grafik untuk memilih lag waktu secara langsung."),
+            plotlyOutput("plot_lag", height = "310px"),
+            tags$div(class = "mt-2", uiOutput("tafsir_lag"))
+          ),
+          
+          card(
+            card_header("Diagram Pencar Hubungan Ukuran Kebakaran vs AQI PM2,5"),
+            p(class = "text-muted small mb-1", "Titik dibedakan berdasarkan kondisi hujan harian untuk melihat efek pencucian polutan."),
+            plotlyOutput("scatter", height = "310px"),
+            tags$div(class = "mt-2", uiOutput("tafsir_parsial"))
+          )
         ),
         
         card(
-          card_header("Diagram Pencar Hubungan Ukuran Kebakaran vs AQI PM2,5"),
-          plotlyOutput("scatter", height = "340px"),
-          uiOutput("tafsir_parsial")
+          card_header("Ringkasan Uji Korelasi Bivariat vs Parsial (Kontrol Cuaca)"),
+          tags$div(
+            style = "overflow-x: auto;",
+            tableOutput("tbl_korelasi_ringkas")
+          )
         )
       )
     ),
@@ -990,19 +1005,36 @@ server <- function(input, output, session) {
   })
   
   # --- TAB 4: HUBUNGAN ---
+  hasil_hubungan <- reactive({
+    df <- data_terfilter()
+    validate(need(nrow(df) >= 8, "Data terlalu sedikit untuk menghitung korelasi lag."))
+    analisis_hubungan_lengkap(df, lag_dipilih = input$lag_api, max_lag = 7)
+  })
   
-  # Output: plot_lag (Bar Chart Korelasi Spearman per Lag Waktu)
+  # Interaksi klik pada bar chart plot_lag -> otomatis menggeser slider lag_api
+  observeEvent(event_data("plotly_click", source = "src_lag"), {
+    klik <- event_data("plotly_click", source = "src_lag")
+    if (!is.null(klik$x)) {
+      lag_baru <- as.integer(as.character(klik$x))
+      if (!is.na(lag_baru) && lag_baru >= 0 && lag_baru <= 7) {
+        updateSliderInput(session, "lag_api", value = lag_baru)
+      }
+    }
+  })
+  
   output$plot_lag <- renderPlotly({
-    analisis <- ambil_analisis()
-    df_lag <- analisis$korelasi_lag
+    df_lag <- hasil_hubungan()$df_lag
     
-    # Warna penanda: lag 2 disorot sebagai asosiasi puncak
-    warna_bars <- ifelse(df_lag$lag == 2, "#1F3A5F", "#94A3B8")
+    warna_bars <- ifelse(
+      df_lag$lag == input$lag_api, "#1F3A5F",
+      ifelse(df_lag$signifikan, "#64748B", "#CBD5E1")
+    )
     
-    p <- plot_ly(df_lag, x = ~factor(lag)) |>
+    plot_ly(df_lag, x = ~factor(lag), source = "src_lag", height = 310) |>
       add_bars(
         y = ~rho,
         marker = list(color = warna_bars),
+        textposition = "none",
         error_y = list(
           type = "data",
           symmetric = FALSE,
@@ -1013,58 +1045,35 @@ server <- function(input, output, session) {
         ),
         hoverinfo = "text",
         text = ~sprintf(
-          "<b>Lag %d Hari</b><br>Spearman rho: %s<br>95%% CI: [%s, %s]<br>p-value: %s",
+          "<b>Lag %d Hari</b><br>Spearman rho: %s<br>95%% CI: [%s, %s]<br>p-value: %s<br><i>(Klik untuk pilih lag ini)</i>",
           lag, format_id(rho, 2), format_id(ci_bawah, 2), format_id(ci_atas, 2),
-          if (p < 0.001) "< 0,001" else format_id(p, 4)
+          ifelse(is.na(p), "-", ifelse(p < 0.001, "< 0,001", format_id(p, 4)))
         )
       ) |>
       layout(
         xaxis = list(title = "Lag Waktu (Hari)"),
-        yaxis = list(title = "Koefisien Korelasi Spearman (rho)", range = c(0, 0.85)),
-        margin = list(t = 20, b = 40, l = 50, r = 20),
+        yaxis = list(title = "Korelasi Spearman (rho)", range = c(-1.05, 1.05)),
+        shapes = list(
+          list(
+            type = "line", x0 = -0.5, x1 = 7.5, y0 = 0, y1 = 0,
+            line = list(color = "#94A3B8", width = 1, dash = "dash")
+          )
+        ),
+        margin = list(t = 15, b = 45, l = 55, r = 20),
         plot_bgcolor = "#FFFFFF",
         paper_bgcolor = "#FFFFFF"
       ) |>
       config(displayModeBar = FALSE)
-    
-    p
   })
   
-  # Output: tafsir_lag (Kartu Interpretasi Korelasi Lag)
-  output$tafsir_lag <- renderUI({
-    analisis <- ambil_analisis()
-    kartu_interpretasi(
-      teks = analisis$tafsir_korelasi,
-      tipe = "info",
-      judul = "Interpretasi Asosiasi Korelasi Lag"
-    )
-  })
-  
-  # Output: tafsir_parsial (Kartu Interpretasi Korelasi Parsial)
-  output$tafsir_parsial <- renderUI({
-    analisis <- ambil_analisis()
-    p_data <- analisis$parsial
-    
-    teks_parsial <- sprintf(
-      "Setelah mengontrol variabel kovariat cuaca (curah hujan dan kecepatan angin) pada lag %d hari, koefisien korelasi parsial tetap bernilai positif (rho parsial = %s, p %s). Hal ini menunjukkan bahwa asosiasi antara ukuran kebakaran dan penurunan kualitas udara bersifat kokoh dan tidak semata-mata dipicu oleh faktor perancu cuaca.",
-      p_data$lag,
-      format_id(p_data$rho_parsial, 2),
-      if (p_data$p_parsial < 0.001) "< 0,001" else paste0("= ", format_id(p_data$p_parsial, 3))
-    )
-    
-    kartu_interpretasi(
-      teks = teks_parsial,
-      tipe = "success",
-      judul = "Interpretasi Asosiasi Korelasi Parsial (Kontrol Cuaca)"
-    )
-  })
-  
-  # Output: scatter (Diagram Pencar Ukuran Kebakaran vs AQI PM2,5)
   output$scatter <- renderPlotly({
     df <- data_terfilter()
     validate(need(nrow(df) > 0, "Tidak ada data untuk pilihan ini."))
     
-    df_plot <- df |> filter(!is.na(api_lag), !is.na(pm25))
+    df_plot <- df |>
+      filter(!is.na(api_lag), !is.na(pm25)) |>
+      mutate(kondisi_hujan = ifelse(hujan_mm > 1, "Hari Hujan (>1 mm)", "Hari Kering (≤1 mm)"))
+    
     validate(need(nrow(df_plot) > 2, "Data lag tidak cukup untuk diagram pencar."))
     
     label_api <- if (input$var_api == "frp_total") {
@@ -1077,42 +1086,130 @@ server <- function(input, output, session) {
       df_plot,
       x = ~api_lag,
       y = ~pm25,
+      color = ~kondisi_hujan,
+      colors = c("Hari Kering (≤1 mm)" = "#1F3A5F", "Hari Hujan (>1 mm)" = "#0284C7"),
       type = "scatter",
       mode = "markers",
-      marker = list(
-        color = "#1F3A5F",
-        size = 7,
-        opacity = 0.75,
-        line = list(color = "#0F172A", width = 0.5)
-      ),
+      height = 310,
+      marker = list(size = 7.5, opacity = 0.8, line = list(color = "#0F172A", width = 0.5)),
       hoverinfo = "text",
-      text = ~sprintf("<b>%s</b><br>%s: %s<br>AQI PM2,5: %s", format(tanggal, "%d %b"), label_api, format_id(api_lag, 1), format_id(pm25, 1))
+      text = ~sprintf(
+        "<b>%s</b><br>%s: %s<br>AQI PM2,5: %s<br>Curah Hujan: %s mm",
+        format(tanggal, "%d %b %Y"), label_api, format_id(api_lag, 1), format_id(pm25, 1), format_id(hujan_mm, 1)
+      )
     )
     
-    # Garis tren regresi linear sederhana untuk visualisasi asosiasi
-    if (nrow(df_plot) >= 5) {
-      fit <- lm(pm25 ~ api_lag, data = df_plot)
-      df_plot$y_pred <- predict(fit)
+    # Kurva tren halus LOESS
+    if (nrow(df_plot) >= 8 && length(unique(df_plot$api_lag)) >= 5) {
+      df_sorted <- df_plot |> arrange(api_lag)
+      fit_loess <- suppressWarnings(loess(pm25 ~ api_lag, data = df_sorted, span = 0.85))
+      df_sorted$y_smooth <- predict(fit_loess)
+      
       p <- p |> add_lines(
+        data = df_sorted,
         x = ~api_lag,
-        y = ~y_pred,
-        line = list(color = "#D00000", width = 2),
-        hoverinfo = "none",
-        name = "Garis Tren Asosiasi"
+        y = ~y_smooth,
+        name = "Tren LOESS",
+        inherit = FALSE,
+        line = list(color = "#D00000", width = 2.2),
+        hoverinfo = "none"
       )
     }
     
-    p <- p |> layout(
+    p |> layout(
       xaxis = list(title = label_api, showgrid = TRUE, gridcolor = "#F1F5F9"),
       yaxis = list(title = "AQI PM2,5", showgrid = TRUE, gridcolor = "#F1F5F9"),
-      showlegend = FALSE,
-      margin = list(t = 20, b = 40, l = 50, r = 20),
+      shapes = list(
+        list(
+          type = "line", x0 = min(df_plot$api_lag), x1 = max(df_plot$api_lag),
+          y0 = 100, y1 = 100, line = list(color = "#FF7E00", width = 1.2, dash = "dot")
+        ),
+        list(
+          type = "line", x0 = min(df_plot$api_lag), x1 = max(df_plot$api_lag),
+          y0 = 150, y1 = 150, line = list(color = "#FF0000", width = 1.2, dash = "dot")
+        )
+      ),
+      legend = list(orientation = "h", x = 0, y = 1.12),
+      margin = list(t = 25, b = 45, l = 55, r = 20),
       plot_bgcolor = "#FFFFFF",
       paper_bgcolor = "#FFFFFF"
     ) |>
       config(displayModeBar = FALSE)
+  })
+  
+  output$tbl_korelasi_ringkas <- renderTable({
+    p_data <- hasil_hubungan()$parsial
+    validate(need(!is.na(p_data$rho_bivariat), "Data tidak cukup."))
     
-    p
+    ket_kekuatan <- function(r) {
+      ar <- abs(r)
+      if (ar >= 0.7) "Kuat"
+      else if (ar >= 0.4) "Sedang"
+      else if (ar >= 0.2) "Lemah"
+      else "Sangat Lemah"
+    }
+    
+    tibble(
+      `Jenis Korelasi (Lag Terpilih)` = c(
+        sprintf("Korelasi Rank Spearman Bivariat (Lag %d Hari)", p_data$lag),
+        sprintf("Korelasi Parsial Spearman (Kontrol Hujan & Angin, Lag %d Hari)", p_data$lag)
+      ),
+      `n` = c(as.integer(p_data$n), as.integer(p_data$n)),
+      `Koefisien (rho)` = c(format_id(p_data$rho_bivariat, 3), format_id(p_data$rho_parsial, 3)),
+      `Nilai p` = c(
+        ifelse(p_data$p_bivariat < 0.001, "< 0,001", format_id(p_data$p_bivariat, 4)),
+        ifelse(p_data$p_parsial < 0.001, "< 0,001", format_id(p_data$p_parsial, 4))
+      ),
+      `Kategori Kekuatan` = c(ket_kekuatan(p_data$rho_bivariat), ket_kekuatan(p_data$rho_parsial)),
+      `Kesimpulan Statistik (α = 0,05)` = c(
+        ifelse(p_data$p_bivariat < 0.05, "Signifikan", "Tidak Signifikan"),
+        ifelse(p_data$p_parsial < 0.05, "Signifikan (Kokoh terhadap Cuaca)", "Tidak Signifikan (Dipengaruhi Cuaca)")
+      )
+    )
+  }, striped = TRUE, hover = TRUE, bordered = TRUE, align = "lrrrcc")
+  
+  output$tafsir_lag <- renderUI({
+    df_lag <- hasil_hubungan()$df_lag |> filter(!is.na(rho))
+    validate(need(nrow(df_lag) > 0, ""))
+    
+    # Cari lag dengan kekuatan asosiasi terbesar (nilai absolut rho terbesar)
+    puncak <- df_lag[which.max(abs(df_lag$rho)), ]
+    terpilih <- df_lag |> filter(lag == input$lag_api)
+    
+    teks_lag <- sprintf(
+      "Pada %s, asosiasi terkuat terdeteksi pada lag %d hari (rho = %s, p %s). Pada lag yang sedang dipilih (%d hari), nilai korelasi Spearman adalah rho = %s (p %s).",
+      input$kota, puncak$lag, format_id(puncak$rho, 2),
+      ifelse(puncak$p < 0.001, "< 0,001", paste0("= ", format_id(puncak$p, 3))),
+      terpilih$lag, format_id(terpilih$rho, 2),
+      ifelse(terpilih$p < 0.001, "< 0,001", paste0("= ", format_id(terpilih$p, 3)))
+    )
+    
+    kartu_interpretasi(teks = teks_lag, tipe = "info", judul = "Interpretasi Asosiasi Korelasi Lag")
+  })
+  
+  output$tafsir_parsial <- renderUI({
+    p_data <- hasil_hubungan()$parsial
+    validate(need(!is.na(p_data$rho_parsial), ""))
+    
+    arah <- if (p_data$rho_parsial >= 0) "positif" else "negatif"
+    signif_teks <- if (p_data$p_parsial < 0.05) {
+      sprintf("tetap bernilai %s dan signifikan secara statistik (p < 0,05), menunjukkan hubungan yang tidak hilang setelah variabel cuaca dikontrol.", arah)
+    } else {
+      "melemah dan tidak signifikan secara statistik (p >= 0,05) setelah variabel cuaca dikontrol, mengindikasikan pengaruh kuat faktor meteorologi."
+    }
+    
+    teks_parsial <- sprintf(
+      "Setelah mengontrol variabel kovariat cuaca (curah hujan dan kecepatan angin) pada lag %d hari, koefisien korelasi parsial bernilai rho = %s (p %s), sehingga %s",
+      p_data$lag, format_id(p_data$rho_parsial, 2),
+      ifelse(p_data$p_parsial < 0.001, "< 0,001", paste0("= ", format_id(p_data$p_parsial, 3))),
+      signif_teks
+    )
+    
+    kartu_interpretasi(
+      teks = teks_parsial,
+      tipe = if (p_data$p_parsial < 0.05 && p_data$rho_parsial > 0) "success" else "warning",
+      judul = "Interpretasi Asosiasi Korelasi Parsial (Kontrol Cuaca)"
+    )
   })
   
   # --- TAB 5: PERBANDINGAN ---
