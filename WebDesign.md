@@ -235,7 +235,7 @@ Empat `value_box()` yang dihitung dari data terfilter:
 | --- | --- | --- |
 | **1. Ringkasan** | Tabel statistik deskriptif (n, hilang, rata-rata, median, sd, min, Q1, Q3, maks, skewness); bar chart proporsi hari per kategori AQI (6 kategori, warna EPA); tabel Shapiro-Wilk dengan kolom Normal (Ya/Tidak) | `tbl_desk`, `plot_kategori`, `tbl_norm` |
 | **2. Tren** | Grafik `plotly` dua sumbu: garis AQI PM2,5 (kiri), **bar** ukuran kebakaran (kanan, sumbu sekunder), garis putus-putus rata-rata bergerak; garis acuan horizontal pada AQI 100 dan 150 | `plot_tren` |
-| **3. Peta Titik Panas** | Peta `leaflet`: deteksi ditampilkan sebagai petak sekitar 4 km di dalam radius 100 km; warna dan legenda hanya memakai kategori kepadatan (rendah, sedang, tinggi, sangat tinggi), tanpa angka per petak; marker kota, lingkaran batas radius, serta popup kategori dan confidence tertinggi | `n_titik`, `peta` |
+| **3. Peta Titik Panas** | Peta `leaflet`: hingga 2.000 deteksi ditampilkan pada koordinat aslinya; data yang lebih besar diringkas menjadi petak sekitar 4 km dengan kategori kepadatan, tanpa angka per petak; marker kota, lingkaran batas radius, dan legenda kategori | `n_titik`, `peta` |
 | **4. Hubungan** | Bar chart korelasi Spearman per lag 0–7 dengan selang kepercayaan; kartu interpretasi korelasi; kartu interpretasi korelasi parsial; scatter plot ukuran kebakaran vs AQI | `plot_lag`, `tafsir_lag`, `tafsir_parsial`, `scatter` |
 | **5. Perbandingan** | Input `periode_api` (rentang periode karhutla); kartu Mann–Whitney U (tabel ringkas, tabel normalitas, kalimat kesimpulan); kartu Kruskal–Wallis + tabel Dunn (`DT`); kartu Chi-square (tabel persen baris, kalimat kesimpulan) | `ringkas_uji`, `tbl_norm_periode`, `tafsir_mw`, `tafsir_kw`, `tbl_dunn`, `tbl_chisq`, `tafsir_chisq` |
 | **6. Regresi** | Cek ukuran sampel; tabel hierarchical regression (R² blok 1, blok 2, ΔR², F, p); tabel koefisien dan koefisien HAC; **badge uji asumsi** (hijau "Terpenuhi", merah "Tidak terpenuhi") untuk normalitas residual, linearitas, autokorelasi, heteroskedastisitas; tabel VIF dan tolerance; teks outlier dan Cook's D; empat grafik diagnostik dan ACF residual | `tbl_sampel`, `tbl_hier`, `tbl_koef`, `tbl_hac`, `tbl_asumsi`, `tbl_vif`, `teks_outlier`, `plot_diag`, `plot_acf` |
@@ -291,7 +291,7 @@ Footer statis di semua tab:
 Tambahan wajib:
 
 - Banner "DATA CONTOH" selama `DATA_CONTOH <- TRUE`.
-- Catatan di tab Peta: angka total menghitung seluruh piksel/deteksi dalam radius 100 km, sedangkan peta merangkumnya sebagai petak kepadatan sekitar 4 km; satu piksel bukan satu kebakaran.
+- Catatan di tab Peta: angka total menghitung seluruh piksel/deteksi dalam radius 100 km; rentang pendek menampilkan posisi deteksi, sedangkan data banyak diringkas per petak kepadatan sekitar 4 km. Satu piksel bukan satu kebakaran.
 - Tidak ada tombol unduh data mentah kualitas udara.
 
 ## 10. Cara Menjalankan (Server Lokal)

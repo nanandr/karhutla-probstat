@@ -223,7 +223,7 @@ ui <- page_sidebar(
         tags$div(
           class = "mt-3",
           kartu_interpretasi(
-            teks = "Setiap petak berwarna merangkum deteksi panas di area sekitar 4 km. Warna menunjukkan kategori kepadatan: rendah, sedang, tinggi, atau sangat tinggi. Angka total di atas tetap menghitung seluruh piksel dalam radius 100 km. Piksel panas bukan jumlah kebakaran unik dan bukan luas area terbakar. Lingkaran biru menunjukkan radius pengamatan 100 km dari pusat kota.",
+            teks = "Untuk rentang pendek, peta menampilkan posisi deteksi asli dengan warna menurut confidence. Jika deteksi sangat banyak, peta merangkumnya per petak sekitar 4 km dengan kategori kepadatan. Angka total di atas tetap menghitung seluruh piksel dalam radius 100 km. Piksel panas bukan jumlah kebakaran unik dan bukan luas area terbakar. Lingkaran biru menunjukkan radius pengamatan 100 km dari pusat kota.",
             tipe = "warning",
             judul = "Peringatan Interpretasi Sensor Spasial"
           )
@@ -777,10 +777,16 @@ server <- function(input, output, session) {
   # Output: n_titik (Teks Jumlah Titik Panas)
   output$n_titik <- renderText({
     pts <- hotspots_terfilter()
+    deskripsi_peta <- if (nrow(pts) <= 2000L) {
+      "Peta menampilkan posisi deteksi."
+    } else {
+      "Peta merangkum kepadatan per petak sekitar 4 km."
+    }
     sprintf(
-      "Total %s piksel panas dalam radius 100 km dari %s. Peta menampilkan kategori kepadatan per petak sekitar 4 km.",
+      "Total %s piksel panas dalam radius 100 km dari %s. %s",
       format_id(nrow(pts), 0),
-      input$kota
+      input$kota,
+      deskripsi_peta
     )
   })
   
@@ -817,7 +823,53 @@ server <- function(input, output, session) {
         popup = "Radius Pengamatan Analisis 100 km"
       )
     
-    if (nrow(pts_sub) > 0) {
+    if (nrow(pts_sub) > 0 && nrow(pts_sub) <= 2000L) {
+      warna_confidence <- c(
+        "l" = "#FDE047",
+        "n" = "#F97316",
+        "h" = "#DC2626"
+      )
+      label_confidence <- c(
+        "l" = "Rendah",
+        "n" = "Nominal",
+        "h" = "Tinggi"
+      )
+      confidence <- tolower(as.character(pts_sub$confidence))
+      confidence[!confidence %in% names(warna_confidence)] <- "l"
+      warna_titik <- unname(warna_confidence[confidence])
+      label_titik <- unname(label_confidence[confidence])
+      popup_teks <- sprintf(
+        paste0(
+          "<strong>Deteksi hotspot NASA FIRMS</strong>",
+          "<br>Tanggal: %s",
+          "<br>FRP: %s MW",
+          "<br>Confidence: %s"
+        ),
+        format(pts_sub$tanggal, "%d %b %Y"),
+        format_id(pts_sub$frp, 1),
+        label_titik
+      )
+
+      m <- m |>
+        addCircleMarkers(
+          data = pts_sub,
+          lng = ~longitude,
+          lat = ~latitude,
+          radius = 3,
+          color = warna_titik,
+          fillColor = warna_titik,
+          fillOpacity = 0.85,
+          weight = 0.5,
+          popup = popup_teks
+        ) |>
+        addLegend(
+          position = "bottomright",
+          colors = unname(warna_confidence[c("l", "n", "h")]),
+          labels = unname(label_confidence[c("l", "n", "h")]),
+          title = "Confidence",
+          opacity = 0.85
+        )
+    } else if (nrow(pts_sub) > 2000L) {
       ukuran_sel <- 0.04
       hotspots_ringkas <- pts_sub |>
         mutate(
