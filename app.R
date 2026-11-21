@@ -17,6 +17,8 @@ for (f in list.files("R", pattern = "[.]R$", full.names = TRUE)) {
   source(f)
 }
 
+jalankan_refresh_hotspots_latar()
+
 # 2. Konfigurasi Tema UI (bslib Bootstrap 5)
 tema_dashboard <- bs_theme(
   version = 5,
@@ -60,7 +62,7 @@ ui <- page_sidebar(
       start = "2026-08-01",
       end = "2026-09-30",
       min = "2026-07-15",
-      max = "2026-10-15",
+      max = Sys.Date(),
       format = "yyyy-mm-dd",
       language = "id",
       separator = " s/d "
@@ -99,7 +101,7 @@ ui <- page_sidebar(
     # Metadata Bawah Sidebar
     tags$div(
       class = "small text-muted",
-      tags$p(class = "mb-1", tags$strong("Status Snapshot:"), " Data dibekukan: 31 Okt 2026"),
+      tags$p(class = "mb-1", tags$strong("Status Hotspot:"), " NASA FIRMS diperbarui harian"),
       tags$p(class = "mb-1", tags$strong("Lingkup Sensor:"), " Radius 100 km dari stasiun"),
       tags$p(class = "mb-0", tags$strong("Atribusi:"), " BMKG/WAQI, NASA FIRMS, Open-Meteo")
     )
@@ -136,7 +138,7 @@ ui <- page_sidebar(
       value = uiOutput("kpi_total_api"),
       showcase = tags$span(style = "font-size: 2rem;", HTML("&#128293;")),
       theme = "light",
-      p(class = "small mb-0 text-muted", "Dalam radius 100 km stasiun")
+      p(class = "small mb-0 text-muted", textOutput("kpi_api_subteks"))
     ),
     
     # KPI 4: Hari Tidak Sehat (AQI > 100)
@@ -221,7 +223,7 @@ ui <- page_sidebar(
         tags$div(
           class = "mt-3",
           kartu_interpretasi(
-            teks = "Satu titik pada peta merepresentasikan satu piksel satelit yang terdeteksi memiliki anomali panas (NASA FIRMS), bukan berarti satu kejadian kebakaran tunggal dan bukan luas area terbakar riil. Lingkaran biru membatasi radius pengamatan 100 km dari stasiun pemantau kota.",
+            teks = "Untuk rentang pendek, peta menampilkan posisi deteksi asli dengan warna menurut confidence. Jika deteksi sangat banyak, peta merangkumnya per petak sekitar 4 km dengan kategori kepadatan. Angka total di atas tetap menghitung seluruh piksel dalam radius 100 km. Piksel panas bukan jumlah kebakaran unik dan bukan luas area terbakar. Lingkaran biru menunjukkan radius pengamatan 100 km dari pusat kota.",
             tipe = "warning",
             judul = "Peringatan Interpretasi Sensor Spasial"
           )
@@ -402,6 +404,48 @@ server <- function(input, output, session) {
       df_sub
     })
   })
+
+  hotspots_snapshot <- reactivePoll(
+    intervalMillis = 60000,
+    session = session,
+    checkFunc = function() {
+      berkas <- c("data/hotspots.rds", "data/hotspots-refresh-status.rds")
+      waktu_modifikasi <- vapply(berkas, function(path) {
+        if (file.exists(path)) as.numeric(file.info(path)$mtime) else 0
+      }, numeric(1))
+      paste(waktu_modifikasi, collapse = "|")
+    },
+    valueFunc = function() {
+      list(
+        data = ambil_hotspots(),
+        status = status_pembaruan_hotspots()
+      )
+    }
+  )
+
+  hotspots_terfilter <- reactive({
+    req(input$kota, input$tgl)
+    pts <- hotspots_snapshot()$data
+    coord <- get_koordinat_kota(input$kota)
+
+    pts <- pts |>
+      filter(tanggal >= input$tgl[1], tanggal <= input$tgl[2])
+    if (nrow(pts) == 0L) return(pts)
+
+    lat1 <- pts$latitude * pi / 180
+    lat2 <- coord$lat * pi / 180
+    delta_lat <- (pts$latitude - coord$lat) * pi / 180
+    delta_lon <- (pts$longitude - coord$lon) * pi / 180
+    jarak_km <- 2 * 6371 * asin(pmin(
+      1,
+      sqrt(
+        sin(delta_lat / 2)^2 +
+          cos(lat1) * cos(lat2) * sin(delta_lon / 2)^2
+      )
+    ))
+
+    pts[!is.na(jarak_km) & jarak_km <= 100, , drop = FALSE]
+  })
   
   # --- LOGIKA VALUE BOXES (AREA B) ---
   
@@ -451,16 +495,33 @@ server <- function(input, output, session) {
     if (input$var_api == "frp_total") "Total FRP Kebakaran" else "Total Piksel Panas"
   })
   
+  output$kpi_api_subteks <- renderText({
+    if (input$var_api == "frp_total") return("Data harian contoh")
+
+    status <- hotspots_snapshot()$status
+    if (is.null(status)) return("NASA FIRMS · menunggu pembaruan pertama")
+    if (isTRUE(status$berhasil)) {
+      paste(
+        "NASA FIRMS · diperbarui",
+        format(status$waktu, "%d-%m-%Y %H:%M")
+      )
+    } else {
+      "NASA FIRMS · pembaruan gagal; snapshot sebelumnya dipakai"
+    }
+  })
+
   output$kpi_total_api <- renderUI({
-    df <- data_terfilter()
-    if (nrow(df) == 0) return(tags$span("-"))
-    
     if (input$var_api == "frp_total") {
+      df <- data_terfilter()
+      if (nrow(df) == 0) return(tags$span("-"))
+
       val <- sum(df$frp_total, na.rm = TRUE)
       tags$span(paste(format_id(val, 1), "MW"))
     } else {
-      val <- sum(df$titik_panas, na.rm = TRUE)
-      tags$span(paste(format_id(val, 0), "Piksel"))
+      pts <- hotspots_terfilter()
+      if (nrow(pts) == 0) return(tags$span("Tidak ada data"))
+
+      tags$span(paste(format_id(nrow(pts), 0), "Piksel"))
     }
   })
   
@@ -626,7 +687,7 @@ server <- function(input, output, session) {
       yaxis = "y2",
       marker = list(color = "rgba(251, 133, 0, 0.45)", line = list(color = "#FB8500", width = 1)),
       hoverinfo = "text",
-      text = ~sprintf("<b>%s</b><br>%s: %s", format(tanggal, "%%d %%b %%Y"), label_api, format_id(api_nilai, 1))
+      text = ~sprintf("<b>%s</b><br>%s: %s", format(tanggal, "%d %b %Y"), label_api, format_id(api_nilai, 1))
     )
     
     # Sumbu Primer: Garis AQI PM2.5 Harian
@@ -637,7 +698,7 @@ server <- function(input, output, session) {
       marker = list(color = "#1F3A5F", size = 4),
       mode = "lines+markers",
       hoverinfo = "text",
-      text = ~sprintf("<b>%s</b><br>AQI PM2,5: %s (%s)", format(tanggal, "%%d %%b %%Y"), format_id(pm25, 1), sapply(pm25, get_kategori_aqi))
+      text = ~sprintf("<b>%s</b><br>AQI PM2,5: %s (%s)", format(tanggal, "%d %b %Y"), format_id(pm25, 1), sapply(pm25, get_kategori_aqi))
     )
     
     # Sumbu Primer: Garis Rata-rata Bergerak
@@ -715,42 +776,32 @@ server <- function(input, output, session) {
   
   # Output: n_titik (Teks Jumlah Titik Panas)
   output$n_titik <- renderText({
-    pts <- ambil_hotspots()
-    req(input$tgl)
-    
-    pts_sub <- pts |>
-      filter(tanggal >= input$tgl[1], tanggal <= input$tgl[2])
-    
-    # Saring sebaran sesuai kedekatan dengan kota terpilih (~150 km)
-    coord <- get_koordinat_kota(input$kota)
-    pts_kota <- pts_sub |>
-      filter(abs(latitude - coord$lat) < 1.3, abs(longitude - coord$lon) < 1.3)
-    
-    sprintf("Total %s piksel panas terdeteksi di sekitar %s", format_id(nrow(pts_kota), 0), input$kota)
+    pts <- hotspots_terfilter()
+    deskripsi_peta <- if (nrow(pts) <= 2000L) {
+      "Peta menampilkan posisi deteksi."
+    } else {
+      "Peta merangkum kepadatan per petak sekitar 4 km."
+    }
+    sprintf(
+      "Total %s piksel panas dalam radius 100 km dari %s. %s",
+      format_id(nrow(pts), 0),
+      input$kota,
+      deskripsi_peta
+    )
   })
   
   # Output: peta (Peta Leaflet Sebaran Titik Panas)
   output$peta <- renderLeaflet({
-    pts <- ambil_hotspots()
+    pts_sub <- hotspots_terfilter()
     coord <- get_koordinat_kota(input$kota)
     
     req(input$tgl)
-    pts_sub <- pts |>
-      filter(tanggal >= input$tgl[1], tanggal <= input$tgl[2]) |>
-      filter(abs(latitude - coord$lat) < 1.3, abs(longitude - coord$lon) < 1.3)
-    
-    # Skema warna menurut tingkat kepercayaan deteksi (NASA FIRMS)
-    get_titik_color <- function(conf) {
-      if (conf == "h") "#D00000"       # Tinggi: Merah tua
-      else if (conf == "n") "#FB8500"  # Nominal: Oranye
-      else "#FFB703"                   # Rendah: Emas/Kuning
-    }
     
     m <- leaflet() |>
-      addProviderTiles(providers$CartoDB.Positron) |>
+      addProviderTiles(providers$OpenStreetMap.Mapnik) |>
       setView(lng = coord$lon, lat = coord$lat, zoom = coord$zoom) |>
       # Marker Pusat Stasiun Kota
-      addCircleMarker(
+      addCircleMarkers(
         lng = coord$lon,
         lat = coord$lat,
         radius = 8,
@@ -772,29 +823,125 @@ server <- function(input, output, session) {
         popup = "Radius Pengamatan Analisis 100 km"
       )
     
-    if (nrow(pts_sub) > 0) {
-      warna_titik <- sapply(pts_sub$confidence, get_titik_color)
-      radius_titik <- pmin(12, pmax(3.5, sqrt(pts_sub$frp) * 1.6))
-      
-      popup_teks <- sprintf(
-        "<strong>Piksel Panas Satelit</strong><br>Tanggal: %s<br>FRP: %s MW<br>Confidence: %s<br>Koordinat: %.3f, %.3f",
-        format(pts_sub$tanggal, "%%d %%b %%Y"),
-        format_id(pts_sub$frp, 1),
-        ifelse(pts_sub$confidence == "h", "Tinggi", ifelse(pts_sub$confidence == "n", "Nominal", "Rendah")),
-        pts_sub$latitude, pts_sub$longitude
+    if (nrow(pts_sub) > 0 && nrow(pts_sub) <= 2000L) {
+      warna_confidence <- c(
+        "l" = "#FDE047",
+        "n" = "#F97316",
+        "h" = "#DC2626"
       )
-      
+      label_confidence <- c(
+        "l" = "Rendah",
+        "n" = "Nominal",
+        "h" = "Tinggi"
+      )
+      confidence <- tolower(as.character(pts_sub$confidence))
+      confidence[!confidence %in% names(warna_confidence)] <- "l"
+      warna_titik <- unname(warna_confidence[confidence])
+      label_titik <- unname(label_confidence[confidence])
+      popup_teks <- sprintf(
+        paste0(
+          "<strong>Deteksi hotspot NASA FIRMS</strong>",
+          "<br>Tanggal: %s",
+          "<br>FRP: %s MW",
+          "<br>Confidence: %s"
+        ),
+        format(pts_sub$tanggal, "%d %b %Y"),
+        format_id(pts_sub$frp, 1),
+        label_titik
+      )
+
       m <- m |>
         addCircleMarkers(
           data = pts_sub,
           lng = ~longitude,
           lat = ~latitude,
-          radius = radius_titik,
+          radius = 3,
           color = warna_titik,
           fillColor = warna_titik,
-          fillOpacity = 0.7,
-          weight = 1,
+          fillOpacity = 0.85,
+          weight = 0.5,
           popup = popup_teks
+        ) |>
+        addLegend(
+          position = "bottomright",
+          colors = unname(warna_confidence[c("l", "n", "h")]),
+          labels = unname(label_confidence[c("l", "n", "h")]),
+          title = "Confidence",
+          opacity = 0.85
+        )
+    } else if (nrow(pts_sub) > 2000L) {
+      ukuran_sel <- 0.04
+      hotspots_ringkas <- pts_sub |>
+        mutate(
+          sel_lat = floor(latitude / ukuran_sel),
+          sel_lon = floor(longitude / ukuran_sel)
+        ) |>
+        group_by(sel_lat, sel_lon) |>
+        summarise(
+          latitude_min = first(sel_lat) * ukuran_sel,
+          longitude_min = first(sel_lon) * ukuran_sel,
+          latitude_max = (first(sel_lat) + 1) * ukuran_sel,
+          longitude_max = (first(sel_lon) + 1) * ukuran_sel,
+          jumlah = n(),
+          confidence = if (any(confidence == "h", na.rm = TRUE)) {
+            "h"
+          } else if (any(confidence == "n", na.rm = TRUE)) {
+            "n"
+          } else {
+            "l"
+          },
+          .groups = "drop"
+        )
+      hotspots_ringkas$kategori <- cut(
+        hotspots_ringkas$jumlah,
+        breaks = c(-Inf, 10, 50, 200, Inf),
+        labels = c("Rendah", "Sedang", "Tinggi", "Sangat tinggi"),
+        ordered_result = TRUE
+      )
+      warna_kategori <- c(
+        "Rendah" = "#FFF2CC",
+        "Sedang" = "#FDBA74",
+        "Tinggi" = "#F97316",
+        "Sangat tinggi" = "#B91C1C"
+      )
+      warna_petakan <- unname(
+        warna_kategori[as.character(hotspots_ringkas$kategori)]
+      )
+      
+      popup_teks <- sprintf(
+        paste0(
+          "<strong>Ringkasan hotspot per petak (~4 km)</strong>",
+          "<br>Kepadatan deteksi: %s",
+          "<br>Confidence tertinggi: %s"
+        ),
+        as.character(hotspots_ringkas$kategori),
+        ifelse(
+          hotspots_ringkas$confidence == "h",
+          "Tinggi",
+          ifelse(hotspots_ringkas$confidence == "n", "Nominal", "Rendah")
+        )
+      )
+      
+      m <- m |>
+        addRectangles(
+          data = hotspots_ringkas,
+          lng1 = ~longitude_min,
+          lat1 = ~latitude_min,
+          lng2 = ~longitude_max,
+          lat2 = ~latitude_max,
+          color = "#FFFDF8",
+          weight = 0.4,
+          opacity = 0.55,
+          fillColor = warna_petakan,
+          fillOpacity = 0.78,
+          popup = popup_teks
+        ) |>
+        addLegend(
+          position = "bottomright",
+          colors = unname(warna_kategori),
+          labels = names(warna_kategori),
+          title = "Kepadatan deteksi",
+          opacity = 0.78
         )
     }
     
@@ -898,7 +1045,7 @@ server <- function(input, output, session) {
         line = list(color = "#0F172A", width = 0.5)
       ),
       hoverinfo = "text",
-      text = ~sprintf("<b>%s</b><br>%s: %s<br>AQI PM2,5: %s", format(tanggal, "%%d %%b"), label_api, format_id(api_lag, 1), format_id(pm25, 1))
+      text = ~sprintf("<b>%s</b><br>%s: %s<br>AQI PM2,5: %s", format(tanggal, "%d %b"), label_api, format_id(api_lag, 1), format_id(pm25, 1))
     )
     
     # Garis tren regresi linear sederhana untuk visualisasi asosiasi

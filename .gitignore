@@ -12,6 +12,7 @@ data/
 *.dat
 
 # Environment / Secrets / Configs
+.Renviron
 .env
 *.env
 config.yml
