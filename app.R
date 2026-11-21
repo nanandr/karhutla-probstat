@@ -362,6 +362,10 @@ ui <- page_sidebar(
   # Footer Atribusi Wajib di Semua Tab
   footer_atribusi()
 )
+ui <- htmltools::tagAppendChild(
+  ui,
+  tags$head(tags$link(rel = "icon", type = "image/x-icon", href = "Frame%20798.ico"))
+)
 
 # 4. Logika Server Aplikasi
 server <- function(input, output, session) {
