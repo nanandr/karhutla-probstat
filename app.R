@@ -303,6 +303,43 @@ tema_dashboard <- bs_theme(
   base_font = font_collection("-apple-system", "BlinkMacSystemFont", "Segoe UI", "Roboto", "sans-serif")
 )
 
+ticker_berita_ui <- tags$div(
+  class = "karhutla-ticker",
+  tags$div(
+    class = "ticker-label",
+    icon("fire"),
+    tags$span("KARHUTLA TERKINI")
+  ),
+  tags$div(
+    class = "ticker-viewport",
+    role = "region",
+    `aria-label` = "Berita karhutla Kalimantan",
+    tags$div(
+      id = "ticker-track",
+      class = "ticker-track is-loading",
+      tags$div(
+        id = "ticker-primary",
+        class = "ticker-group",
+        tags$span(class = "ticker-loading", "Memuat berita terkait karhutla...")
+      ),
+      tags$div(
+        id = "ticker-copy",
+        class = "ticker-group",
+        `aria-hidden` = "true"
+      )
+    )
+  ),
+  tags$div(
+    class = "ticker-firms",
+    icon("satellite"),
+    tags$strong("NASA FIRMS"),
+    " · ",
+    tags$span(id = "ticker-clock", class = "ticker-clock", "Memuat jam..."),
+    " · ",
+    uiOutput("ticker_hotspot", inline = TRUE)
+  )
+)
+
 # 3. Definisi Antarmuka Pengguna (UI)
 ui <- page_sidebar(
   title = tags$div(
@@ -311,9 +348,6 @@ ui <- page_sidebar(
     tags$span(class = "badge bg-primary-subtle text-primary border border-primary-subtle small ms-2", "Server Lokal")
   ),
   theme = tema_dashboard,
-  header = tags$head(
-    tags$link(rel = "stylesheet", type = "text/css", href = "styles.css")
-  ),
   
   # Area A: Sidebar Filter Global
   sidebar = sidebar(
@@ -380,6 +414,7 @@ ui <- page_sidebar(
   
   # Banner Peringatan Data Contoh (Muncul Otomatis Saat DATA_CONTOH == TRUE)
   banner_data_contoh(),
+  ticker_berita_ui,
   
   # Area B: Baris Kartu Indikator Utama (KPI)
   layout_columns(
@@ -662,7 +697,69 @@ ui <- page_sidebar(
 )
 ui <- htmltools::tagAppendChild(
   ui,
-  tags$head(tags$link(rel = "icon", type = "image/x-icon", href = "Frame%20798.ico"))
+  tags$div(
+    id = "site-intro",
+    class = "site-intro",
+    role = "region",
+    `aria-label` = "Intro dashboard",
+    tags$div(
+      class = "intro-orb intro-orb-one",
+      `aria-hidden` = "true"
+    ),
+    tags$div(
+      class = "intro-orb intro-orb-two",
+      `aria-hidden` = "true"
+    ),
+    tags$div(
+      class = "intro-content",
+      tags$span(class = "intro-eyebrow", "Dashboard interaktif Kalimantan"),
+      tags$h1(
+        class = "intro-slide intro-slide-title",
+        "Analisa Kualitas Udara & Karhutla Kalimantan"
+      ),
+      tags$div(
+        class = "intro-slide intro-credit intro-credit-one",
+        tags$span(class = "intro-credit-label", "Created by"),
+        tags$h2("Hilmi Mithwa Ramadhan")
+      ),
+      tags$div(
+        class = "intro-slide intro-credit intro-credit-two",
+        tags$span(class = "intro-credit-label", "Created by"),
+        tags$h2("Nandana Rafi Ardika")
+      ),
+      tags$div(
+        class = "intro-slide intro-credit intro-credit-three",
+        tags$span(class = "intro-credit-label", "Created by"),
+        tags$h2("Ikhsanul Richi Fauzi")
+      )
+    ),
+    tags$div(
+      class = "intro-progress",
+      tags$span()
+    ),
+    tags$button(
+      id = "skip-intro",
+      type = "button",
+      class = "intro-skip",
+      "Lewati intro"
+    ),
+    tags$script(htmltools::HTML(
+      "document.addEventListener('click', function(event) {
+        if (!(event.target instanceof Element)) return;
+        if (!event.target.closest('#skip-intro')) return;
+        var intro = document.getElementById('site-intro');
+        if (intro) intro.classList.add('is-skipped');
+      });"
+    ))
+  )
+)
+ui <- htmltools::tagList(
+  tags$head(
+    tags$link(rel = "stylesheet", type = "text/css", href = "styles.css"),
+  tags$link(rel = "icon", type = "image/x-icon", href = "Frame%20798.ico"),
+  tags$script(src = "news-ticker.js", defer = NA)
+  ),
+  ui
 )
 
 # 4. Logika Server Aplikasi
@@ -1002,6 +1099,24 @@ server <- function(input, output, session) {
       ))
     }
     "NASA FIRMS gagal diperbarui; snapshot sebelumnya tetap digunakan."
+  })
+
+  output$ticker_hotspot <- renderUI({
+    hotspots <- hotspots_snapshot()$data
+    tanggal_tersedia <- hotspots$tanggal[!is.na(hotspots$tanggal)]
+    if (length(tanggal_tersedia) == 0L) {
+      return(tags$span("Data hotspot belum tersedia"))
+    }
+
+    tanggal_terbaru <- max(tanggal_tersedia)
+    jumlah_terbaru <- sum(hotspots$tanggal == tanggal_terbaru, na.rm = TRUE)
+    tags$span(
+      title = paste(
+        "Jumlah deteksi pada snapshot NASA FIRMS tanggal",
+        format(tanggal_terbaru, "%d %b %Y")
+      ),
+      paste(format_id(jumlah_terbaru, 0), "deteksi")
+    )
   })
 
   output$kpi_total_api <- renderUI({
