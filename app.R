@@ -17,8 +17,6 @@ for (f in list.files("R", pattern = "[.]R$", full.names = TRUE)) {
   source(f)
 }
 
-jalankan_refresh_hotspots_latar()
-
 # 2. Konfigurasi Tema UI (bslib Bootstrap 5)
 tema_dashboard <- bs_theme(
   version = 5,
@@ -214,10 +212,22 @@ ui <- page_sidebar(
       card(
         card_header(
           tags$div(
-            class = "d-flex justify-content-between align-items-center flex-wrap",
+            class = "d-flex justify-content-between align-items-center flex-wrap gap-3",
             tags$span("Sebaran Spasial Titik Panas Satelit (NASA FIRMS)"),
-            textOutput("n_titik")
+            actionButton(
+              inputId = "perbarui_hotspots",
+              label = tagList(
+                icon("refresh"),
+                tags$span("Perbarui data terbaru")
+              ),
+              class = "btn-refresh-hotspots"
+            )
           )
+        ),
+        tags$div(
+          class = "d-flex justify-content-between align-items-center flex-wrap small text-muted mb-2",
+          textOutput("status_hotspot"),
+          textOutput("n_titik")
         ),
         leafletOutput("peta", height = "520px"),
         tags$div(
@@ -370,9 +380,9 @@ ui <- htmltools::tagAppendChild(
 # 4. Logika Server Aplikasi
 server <- function(input, output, session) {
 
-  # 1. Reactive Polling Snapshot Titik Panas Satelit (NASA FIRMS)
+  # 1. Pantau snapshot agar hasil worker yang diminta pengguna segera tampil
   hotspots_snapshot <- reactivePoll(
-    intervalMillis = 60000,
+    intervalMillis = 5000,
     session = session,
     checkFunc = function() {
       berkas <- c("data/hotspots.rds", "data/hotspots-refresh-status.rds")
@@ -389,6 +399,90 @@ server <- function(input, output, session) {
     }
   )
 
+  waktu_permintaan_refresh <- reactiveVal(NULL)
+
+  observeEvent(input$perbarui_hotspots, {
+    waktu_permintaan_refresh(Sys.time())
+    tryCatch(
+      {
+        jalankan_refresh_hotspots_latar()
+        showNotification(
+          tags$div(
+            class = "refresh-process-notification",
+            icon("refresh", class = "fa-spin"),
+            tags$span(
+              "Memperbarui hotspot NASA FIRMS."
+            )
+          ),
+          id = "hotspot-refresh",
+          type = "message",
+          duration = NULL,
+          closeButton = FALSE
+        )
+      },
+      error = function(e) {
+        waktu_permintaan_refresh(NULL)
+        removeNotification("hotspot-refresh")
+        showNotification(
+          paste("Pembaruan NASA FIRMS gagal dimulai:", conditionMessage(e)),
+          type = "error",
+          duration = NULL
+        )
+      }
+    )
+  })
+
+  observeEvent(hotspots_snapshot()$status, {
+    status <- hotspots_snapshot()$status
+    waktu_permintaan <- waktu_permintaan_refresh()
+    waktu_hasil <- if (is.null(status)) NULL else status$waktu_proses
+    if (is.null(waktu_hasil) && !is.null(status)) {
+      waktu_hasil <- status$waktu
+    }
+    if (is.null(status) || is.null(waktu_permintaan) ||
+        is.null(waktu_hasil) || waktu_hasil <= waktu_permintaan) {
+      return()
+    }
+
+    waktu_permintaan_refresh(NULL)
+    removeNotification("hotspot-refresh")
+    if (identical(status$hasil_proses, "sudah diperbarui hari ini")) {
+      showNotification(
+        "NASA FIRMS sudah diperbarui hari ini. Snapshot terbaru tetap digunakan.",
+        type = "message"
+      )
+    } else if (identical(status$hasil_proses, "pembaruan sedang berjalan")) {
+      showNotification(
+        "Pembaruan NASA FIRMS lain sedang berjalan. Snapshot akan diperbarui oleh proses tersebut.",
+        type = "message"
+      )
+    } else if (isTRUE(status$berhasil)) {
+      showNotification(
+        "NASA FIRMS berhasil diperbarui. Snapshot terbaru sekarang digunakan.",
+        type = "message"
+      )
+    } else {
+      pesan <- if (!is.null(status$pesan) && nzchar(status$pesan)) {
+        paste0(": ", status$pesan)
+      } else {
+        ""
+      }
+      penggunaan_snapshot <- if (isTRUE(status$snapshot_diperbarui)) {
+        "Data yang berhasil diunduh sudah diterapkan ke snapshot."
+      } else {
+        "Snapshot sebelumnya tetap digunakan."
+      }
+      showNotification(
+        paste0(
+          "NASA FIRMS gagal diperbarui", pesan,
+          ". ", penggunaan_snapshot
+        ),
+        type = "error",
+        duration = NULL
+      )
+    }
+  }, ignoreInit = TRUE)
+
   # 2. Reactive Filter Titik Panas Satelit (Rentang Tanggal & Radius 100 km Kota)
   hotspots_terfilter <- reactive({
     req(input$kota, input$tgl)
@@ -396,7 +490,12 @@ server <- function(input, output, session) {
     coord <- get_koordinat_kota(input$kota)
 
     pts <- pts |>
-      filter(tanggal >= input$tgl[1], tanggal <= input$tgl[2])
+      filter(
+        tanggal >= input$tgl[1],
+        tanggal <= input$tgl[2],
+        abs(latitude - coord$lat) < 1,
+        abs(longitude - coord$lon) < 1
+      )
     if (nrow(pts) == 0L) return(pts)
 
     lat1 <- pts$latitude * pi / 180
@@ -550,9 +649,42 @@ server <- function(input, output, session) {
         "NASA FIRMS · diperbarui",
         format(status$waktu, "%d-%m-%Y %H:%M")
       )
+    } else if (isTRUE(status$snapshot_diperbarui)) {
+      "NASA FIRMS · snapshot diperbarui sebagian"
     } else {
       "NASA FIRMS · pembaruan gagal; snapshot sebelumnya dipakai"
     }
+  })
+
+  output$status_hotspot <- renderText({
+    status <- hotspots_snapshot()$status
+    if (is.null(status)) {
+      return("Belum ada data pembaruan; gunakan tombol untuk mengambil data terbaru.")
+    }
+    if (identical(status$hasil_proses, "pembaruan sedang berjalan")) {
+      return("Pembaruan NASA FIRMS sedang berjalan; snapshot sebelumnya tetap digunakan sementara.")
+    }
+    if (isTRUE(status$berhasil)) {
+      return(paste(
+        "Terakhir diperbarui:",
+        format(status$waktu, "%d-%m-%Y %H:%M")
+      ))
+    }
+    if (isTRUE(status$snapshot_diperbarui)) {
+      return(paste(
+        "Sebagian produk NASA FIRMS gagal diperbarui:",
+        status$pesan,
+        "Data yang berhasil diunduh sudah diterapkan; data lama untuk produk gagal tetap dipertahankan."
+      ))
+    }
+    if (!is.null(status$pesan) && nzchar(status$pesan)) {
+      return(paste(
+        "NASA FIRMS gagal diperbarui:",
+        status$pesan,
+        "Snapshot sebelumnya tetap digunakan."
+      ))
+    }
+    "NASA FIRMS gagal diperbarui; snapshot sebelumnya tetap digunakan."
   })
 
   output$kpi_total_api <- renderUI({
@@ -842,7 +974,7 @@ server <- function(input, output, session) {
     
     req(input$tgl)
     
-    m <- leaflet() |>
+    m <- leaflet(options = leafletOptions(preferCanvas = TRUE)) |>
       addProviderTiles(providers$OpenStreetMap.Mapnik) |>
       setView(lng = coord$lon, lat = coord$lat, zoom = coord$zoom) |>
       # Marker Pusat Stasiun Kota

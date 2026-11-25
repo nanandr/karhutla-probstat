@@ -78,6 +78,56 @@ body {
   padding: 12px 18px;
 }
 
+.btn-refresh-hotspots {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.55rem;
+  border: 1px solid #264a73;
+  border-radius: 999px;
+  padding: 0.55rem 1rem;
+  background: linear-gradient(135deg, #1f3a5f, #315c88);
+  color: #fff;
+  font-size: 0.88rem;
+  font-weight: 600;
+  box-shadow: 0 3px 8px rgba(20, 38, 64, 0.18);
+  transition: transform 0.18s ease, box-shadow 0.18s ease, background 0.18s ease;
+}
+
+.btn-refresh-hotspots:hover {
+  border-color: #142640;
+  background: linear-gradient(135deg, #142640, #264a73);
+  color: #fff;
+  transform: translateY(-1px);
+  box-shadow: 0 5px 12px rgba(20, 38, 64, 0.24);
+}
+
+.btn-refresh-hotspots:focus-visible {
+  outline: 3px solid rgba(255, 183, 3, 0.65);
+  outline-offset: 3px;
+  box-shadow: 0 0 0 0.2rem rgba(31, 58, 95, 0.2);
+}
+
+.btn-refresh-hotspots .fa-refresh {
+  color: var(--fire-gold);
+}
+
+.refresh-process-notification {
+  display: flex;
+  align-items: center;
+  gap: 0.65rem;
+  font-weight: 600;
+}
+
+.refresh-process-notification .fa-refresh {
+  color: var(--fire-orange);
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .refresh-process-notification .fa-spin {
+    animation: none;
+  }
+}
+
 /* Kartu Interpretasi Statistik */
 .kartu-interpretasi {
   border-radius: 6px;

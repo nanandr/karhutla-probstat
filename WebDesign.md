@@ -154,8 +154,10 @@ produk masing-masing satelit. Pembaruan harian meninjau ulang tujuh hari terakhi
 dan melakukan backfill hingga 180 hari saat produk belum memiliki progres.
 Produk NRT dimulai setelah tanggal akhir Standard Processing yang tersedia.
 Area API membatasi setiap permintaan maksimal lima hari. Jalankan
-`scripts/install_hotspot_schedule.ps1` sekali untuk memasang jadwal Windows
-pukul 06:00; aplikasi juga memeriksa pembaruan saat dibuka.
+klik tombol **Perbarui data terbaru** pada tab peta untuk memulai pembaruan;
+aplikasi tidak mengunduh ulang data saat dibuka. Worker berjalan di latar agar
+dashboard tetap responsif. Jika jadwal Windows lama pernah dipasang, hapus
+dengan `Unregister-ScheduledTask -TaskName "KarhutlaProbstat-Hotspot-Daily-Refresh" -Confirm:$false`.
 
 ### 6.3 Generator data contoh (`R/dummy_data.R`)
 

@@ -33,6 +33,13 @@ jalankan_worker <- function() {
       source("R/data_source.R")
       hasil <- perbarui_hotspots_harian()
       if (!isTRUE(hasil$diperbarui)) {
+        status_sebelumnya <- status_pembaruan_hotspots()
+        if (is.null(status_sebelumnya)) {
+          status_sebelumnya <- list(berhasil = FALSE)
+        }
+        status_sebelumnya$waktu_proses <- Sys.time()
+        status_sebelumnya$hasil_proses <- hasil$alasan
+        simpan_status_pembaruan_hotspots(status_sebelumnya)
         message("Pembaruan hotspot dilewati: ", hasil$alasan)
       }
       0L
