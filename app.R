@@ -12,12 +12,283 @@ library(leaflet)
 library(DT)
 
 # 1. Muat Seluruh Skrip di Folder R/
-# Termasuk dummy_data.R, data_source.R, ui_helpers.R, dan berkas analisis statistik bila ada
 for (f in list.files("R", pattern = "[.]R$", full.names = TRUE)) {
   source(f)
 }
 
 jalankan_refresh_hotspots_latar()
+
+# Helper internal: Evaluasi dinamis untuk Tab 5 (Perbandingan) & Tab 6 (Regresi)
+hitung_analisis_dinamis <- function(df_sub, df_semua_kota, periode_karhutla, lag_n) {
+  # --- A. Uji Dua Periode (Normal vs Karhutla) ---
+  df_per <- df_sub |>
+    filter(!is.na(pm25)) |>
+    mutate(
+      periode = ifelse(
+        tanggal >= periode_karhutla[1] & tanggal <= periode_karhutla[2],
+        "Periode Karhutla",
+        "Periode Normal"
+      ),
+      periode = factor(periode, levels = c("Periode Normal", "Periode Karhutla"))
+    )
+
+  ringkas_per <- df_per |>
+    group_by(periode, .drop = FALSE) |>
+    summarise(
+      n = n(),
+      median = if (n() > 0) median(pm25, na.rm = TRUE) else NA_real_,
+      iqr = if (n() > 0) IQR(pm25, na.rm = TRUE) else NA_real_,
+      rata_rata = if (n() > 0) mean(pm25, na.rm = TRUE) else NA_real_,
+      .groups = "drop"
+    )
+
+  norm_per <- lapply(levels(df_per$periode), function(p_lbl) {
+    vals <- df_per$pm25[df_per$periode == p_lbl]
+    if (length(vals) >= 3 && length(unique(vals)) > 1) {
+      sw <- stats::shapiro.test(vals)
+      tibble(data = p_lbl, n = length(vals), W = as.numeric(sw$statistic), p = sw$p.value, normal = sw$p.value >= 0.05)
+    } else {
+      tibble(data = p_lbl, n = length(vals), W = NA_real_, p = NA_real_, normal = FALSE)
+    }
+  }) |> bind_rows()
+
+  n_norm <- sum(df_per$periode == "Periode Normal")
+  n_karh <- sum(df_per$periode == "Periode Karhutla")
+  if (n_norm >= 2 && n_karh >= 2) {
+    mw_res <- suppressWarnings(stats::wilcox.test(pm25 ~ periode, data = df_per, exact = FALSE))
+    z_approx <- abs(qnorm(pmax(mw_res$p.value / 2, 1e-16)))
+    r_efek <- z_approx / sqrt(nrow(df_per))
+    label_efek <- if (r_efek >= 0.5) sprintf("besar (r = %s)", format_id(r_efek, 2))
+                  else if (r_efek >= 0.3) sprintf("sedang (r = %s)", format_id(r_efek, 2))
+                  else sprintf("kecil (r = %s)", format_id(r_efek, 2))
+  } else {
+    mw_res <- list(statistic = NA_real_, p.value = NA_real_)
+    label_efek <- "tidak dapat dihitung (sampel periode kurang)"
+  }
+
+  # --- B. Chi-Square Kategori AQI per Periode ---
+  kat_levels <- c("Baik", "Sedang", "Tidak Sehat (Sensitif)", "Tidak Sehat", "Sangat Tidak Sehat", "Berbahaya")
+  df_per$kat_aqi <- factor(sapply(df_per$pm25, get_kategori_aqi), levels = kat_levels)
+  tab_kont <- table(df_per$periode, df_per$kat_aqi)
+  tab_aktif <- tab_kont[, colSums(tab_kont) > 0, drop = FALSE]
+
+  if (nrow(tab_aktif) >= 2 && ncol(tab_aktif) >= 2 && all(rowSums(tab_aktif) > 0)) {
+    cs_res <- suppressWarnings(stats::chisq.test(tab_aktif))
+    harapan_min <- min(cs_res$expected)
+  } else {
+    cs_res <- list(statistic = NA_real_, parameter = NA_integer_, p.value = NA_real_)
+    harapan_min <- NA_real_
+  }
+
+  persen_mat <- prop.table(tab_kont, margin = 1) * 100
+  persen_mat[is.nan(persen_mat)] <- 0
+  persen_df <- as.data.frame.matrix(round(persen_mat, 1))
+  persen_df <- tibble::rownames_to_column(persen_df, var = "Periode")
+  for (col_nm in kat_levels) {
+    persen_df[[col_nm]] <- paste0(format_id(persen_df[[col_nm]], 1), "%")
+  }
+
+  # --- C. Kruskal-Wallis & Dunn Post-Hoc Antar Kota ---
+  df_kw <- df_semua_kota |> filter(!is.na(pm25))
+  kota_aktif <- unique(as.character(df_kw$kota))
+  if (length(kota_aktif) >= 2 && nrow(df_kw) >= 6) {
+    kw_res <- stats::kruskal.test(pm25 ~ factor(kota), data = df_kw)
+    k_grp <- length(kota_aktif)
+    n_tot <- nrow(df_kw)
+    eps2 <- as.numeric(kw_res$statistic) / ((n_tot^2 - 1) / (n_tot + 1))
+    kw_efek <- if (eps2 >= 0.14) sprintf("efek besar (ε² = %s)", format_id(eps2, 2))
+               else if (eps2 >= 0.06) sprintf("efek sedang (ε² = %s)", format_id(eps2, 2))
+               else sprintf("efek kecil (ε² = %s)", format_id(eps2, 2))
+
+    df_kw$rk <- rank(df_kw$pm25)
+    tie_counts <- table(df_kw$pm25)
+    tie_adj <- sum(tie_counts^3 - tie_counts) / (12 * (n_tot - 1))
+    var_rank <- (n_tot * (n_tot + 1) / 12) - tie_adj
+
+    pasangan <- combn(kota_aktif, 2, simplify = FALSE)
+    dunn_raw <- lapply(pasangan, function(pair) {
+      r1 <- df_kw$rk[df_kw$kota == pair[1]]
+      r2 <- df_kw$rk[df_kw$kota == pair[2]]
+      se_d <- sqrt(var_rank * (1 / length(r1) + 1 / length(r2)))
+      z_val <- (mean(r1) - mean(r2)) / se_d
+      p_raw <- 2 * pnorm(-abs(z_val))
+      tibble(group1 = pair[1], group2 = pair[2], z = z_val, p = p_raw)
+    }) |> bind_rows() |>
+      mutate(
+        p.adj = p.adjust(p, method = "holm"),
+        p.adj.signif = dplyr::case_when(
+          p.adj < 0.001 ~ "***",
+          p.adj < 0.01 ~ "**",
+          p.adj < 0.05 ~ "*",
+          TRUE ~ "ns"
+        )
+      )
+  } else {
+    kw_res <- list(statistic = NA_real_, parameter = NA_integer_, p.value = NA_real_)
+    kw_efek <- "-"
+    dunn_raw <- tibble(group1 = character(), group2 = character(), z = numeric(), p = numeric(), p.adj = numeric(), p.adj.signif = character())
+  }
+
+  # --- D. Regresi Hierarkis, OLS vs HAC, Asumsi & VIF ---
+  df_reg <- df_sub |>
+    mutate(pred_api = if (lag_n > 0) api_lag else api_nilai) |>
+    filter(!is.na(pm25), !is.na(pred_api))
+
+  # Gunakan kovariat cuaca yang memiliki varians > 0
+  kandidat_cuaca <- c("hujan_mm", "suhu_c", "angin_maks")
+  cuaca_valid <- kandidat_cuaca[vapply(kandidat_cuaca, function(v) {
+    v %in% names(df_reg) && sum(!is.na(df_reg[[v]])) > 5 && stats::sd(df_reg[[v]], na.rm = TRUE) > 0
+  }, logical(1))]
+
+  df_reg <- df_reg |> tidyr::drop_na(dplyr::all_of(c("pm25", "pred_api", cuaca_valid)))
+  n_reg <- nrow(df_reg)
+  k_pred <- 1L + length(cuaca_valid)
+
+  if (n_reg >= 10) {
+    f2 <- stats::as.formula(paste("pm25 ~", paste(c("pred_api", cuaca_valid), collapse = " + ")))
+    fit2 <- stats::lm(f2, data = df_reg)
+    s2 <- summary(fit2)
+
+    if (length(cuaca_valid) > 0) {
+      f1 <- stats::as.formula(paste("pm25 ~", paste(cuaca_valid, collapse = " + ")))
+      fit1 <- stats::lm(f1, data = df_reg)
+      r2_b1 <- summary(fit1)$r.squared
+      aov_cmp <- stats::anova(fit1, fit2)
+      f_chg <- aov_cmp$F[2]
+      p_chg <- aov_cmp$`Pr(>F)`[2]
+    } else {
+      r2_b1 <- 0
+      f_chg <- s2$fstatistic[1]
+      p_chg <- stats::pf(f_chg, s2$fstatistic[2], s2$fstatistic[3], lower.tail = FALSE)
+    }
+    r2_b2 <- s2$r.squared
+
+    label_map <- c(
+      "(Intercept)" = "Intersep",
+      "pred_api" = sprintf("Ukuran Kebakaran (Lag %d Hari)", lag_n),
+      "hujan_mm" = "Curah Hujan (mm)",
+      "suhu_c" = "Suhu Udara (°C)",
+      "angin_maks" = "Kecepatan Angin Maks (km/jam)"
+    )
+
+    coef_mat <- s2$coefficients
+    koef_tbl <- tibble(
+      Prediktor = unname(ifelse(rownames(coef_mat) %in% names(label_map), label_map[rownames(coef_mat)], rownames(coef_mat))),
+      Estimasi = format_id(coef_mat[, 1], 4),
+      `Galat Baku` = format_id(coef_mat[, 2], 4),
+      `Statistik t` = format_id(coef_mat[, 3], 2),
+      `Nilai p` = ifelse(coef_mat[, 4] < 0.001, "< 0,001", format_id(coef_mat[, 4], 4))
+    )
+
+    # Estimasi Newey-West HAC manual (lag Bartlett L = floor(4*(n/100)^(2/9)))
+    X <- stats::model.matrix(fit2)
+    u <- stats::residuals(fit2)
+    XtX_inv <- solve(crossprod(X))
+    L_nw <- max(1L, floor(4 * (n_reg / 100)^(2 / 9)))
+    S_hac <- crossprod(X * u)
+    for (l in seq_len(L_nw)) {
+      w_l <- 1 - l / (L_nw + 1)
+      Gamma_l <- t(X[(l + 1):n_reg, , drop = FALSE] * u[(l + 1):n_reg]) %*%
+        (X[1:(n_reg - l), , drop = FALSE] * u[1:(n_reg - l)])
+      S_hac <- S_hac + w_l * (Gamma_l + t(Gamma_l))
+    }
+    vcov_hac <- XtX_inv %*% S_hac %*% XtX_inv
+    se_hac <- sqrt(diag(vcov_hac))
+    t_hac <- coef_mat[, 1] / se_hac
+    p_hac <- 2 * stats::pt(-abs(t_hac), df = fit2$df.residual)
+
+    koef_hac_tbl <- tibble(
+      Prediktor = koef_tbl$Prediktor,
+      Estimasi = format_id(coef_mat[, 1], 4),
+      `Galat Baku HAC` = format_id(se_hac, 4),
+      `Statistik t` = format_id(t_hac, 2),
+      `Nilai p` = ifelse(p_hac < 0.001, "< 0,001", format_id(p_hac, 4))
+    )
+
+    # Uji Asumsi Klasik
+    sw_res <- stats::shapiro.test(u)
+    dw_stat <- sum(diff(u)^2) / sum(u^2)
+    bp_fit <- stats::lm(I(u^2) ~ X[, -1, drop = FALSE])
+    bp_stat <- n_reg * summary(bp_fit)$r.squared
+    bp_p <- stats::pchisq(bp_stat, df = ncol(X) - 1, lower.tail = FALSE)
+
+    asumsi_tbl <- tibble(
+      uji = c(
+        "Normalitas Residual (Shapiro-Wilk)",
+        "Autokorelasi Serial (Durbin-Watson)",
+        "Homoskedastisitas (Breusch-Pagan)"
+      ),
+      statistik = c(
+        paste0("W = ", format_id(sw_res$statistic, 3)),
+        paste0("DW = ", format_id(dw_stat, 2)),
+        paste0("BP = ", format_id(bp_stat, 2))
+      ),
+      p = c(
+        ifelse(sw_res$p.value < 0.001, "< 0,001", format_id(sw_res$p.value, 4)),
+        ifelse(dw_stat < 1.5 || dw_stat > 2.5, "< 0,05", "> 0,05"),
+        ifelse(bp_p < 0.001, "< 0,001", format_id(bp_p, 4))
+      ),
+      lolos = c(sw_res$p.value >= 0.05, dw_stat >= 1.5 && dw_stat <= 2.5, bp_p >= 0.05)
+    )
+
+    # VIF & Tolerance
+    pred_cols <- colnames(X)[-1]
+    if (length(pred_cols) >= 2) {
+      vif_vals <- vapply(pred_cols, function(col_i) {
+        r2_i <- summary(stats::lm(X[, col_i] ~ X[, setdiff(pred_cols, col_i), drop = FALSE]))$r.squared
+        1 / max(1 - r2_i, 1e-6)
+      }, numeric(1))
+    } else {
+      vif_vals <- rep(1.0, length(pred_cols))
+    }
+    vif_tbl <- tibble(
+      prediktor = unname(ifelse(pred_cols %in% names(label_map), label_map[pred_cols], pred_cols)),
+      VIF = vif_vals,
+      tolerance = 1 / vif_vals,
+      lolos = vif_vals < 3
+    )
+  } else {
+    r2_b1 <- NA_real_; r2_b2 <- NA_real_; f_chg <- NA_real_; p_chg <- NA_real_
+    koef_tbl <- tibble(Info = "Data valid tidak mencukupi (minimal 10 observasi).")
+    koef_hac_tbl <- koef_tbl
+    asumsi_tbl <- tibble(uji = "Data Kurang", statistik = "-", p = "-", lolos = FALSE)
+    vif_tbl <- tibble(prediktor = "-", VIF = NA_real_, tolerance = NA_real_, lolos = FALSE)
+  }
+
+  list(
+    uji_dua_periode = list(
+      ringkas = ringkas_per,
+      normalitas = norm_per,
+      uji = mw_res,
+      efek = label_efek
+    ),
+    chisq = list(
+      persen_baris = persen_df,
+      uji = cs_res,
+      harapan_min = harapan_min
+    ),
+    uji_antar_kota = list(
+      kw = kw_res,
+      efek = kw_efek,
+      dunn = dunn_raw
+    ),
+    sampel = list(
+      n = n_reg,
+      k = k_pred,
+      min_uji_model = 50L + 8L * k_pred,
+      model_memadai = n_reg >= (50L + 8L * k_pred)
+    ),
+    hierarkis = list(
+      r2 = c(blok1 = r2_b1, blok2 = r2_b2),
+      delta_r2 = r2_b2 - r2_b1,
+      uji_perubahan = list(F = f_chg, p = p_chg)
+    ),
+    koef = koef_tbl,
+    koef_hac = koef_hac_tbl,
+    asumsi = asumsi_tbl,
+    vif = vif_tbl
+  )
+}
 
 # 2. Konfigurasi Tema UI (bslib Bootstrap 5)
 tema_dashboard <- bs_theme(
@@ -59,8 +330,8 @@ ui <- page_sidebar(
     dateRangeInput(
       inputId = "tgl",
       label = "Rentang Tanggal Pengamatan:",
-      start = "2026-08-01",
-      end = "2026-09-30",
+      start = "2026-07-15",
+      end = "2026-08-31",
       min = "2026-07-15",
       max = Sys.Date(),
       format = "yyyy-mm-dd",
@@ -234,19 +505,34 @@ ui <- page_sidebar(
     # Tab 4: Hubungan
     nav_panel(
       title = "4. Hubungan",
-      layout_columns(
-        col_widths = c(6, 6),
+      tags$div(
+        class = "d-flex flex-column gap-3",
         
-        card(
-          card_header("Korelasi Rank Spearman per Lag Waktu (0–7 Hari)"),
-          plotlyOutput("plot_lag", height = "340px"),
-          uiOutput("tafsir_lag")
+        layout_columns(
+          col_widths = c(6, 6),
+          fill = FALSE,
+          
+          card(
+            card_header("Korelasi Rank Spearman per Lag Waktu (0–7 Hari)"),
+            p(class = "text-muted small mb-1", "Klik batang pada grafik untuk memilih lag waktu secara langsung."),
+            plotlyOutput("plot_lag", height = "310px"),
+            tags$div(class = "mt-2", uiOutput("tafsir_lag"))
+          ),
+          
+          card(
+            card_header("Diagram Pencar Hubungan Ukuran Kebakaran vs AQI PM2,5"),
+            p(class = "text-muted small mb-1", "Titik dibedakan berdasarkan kondisi hujan harian untuk melihat efek pencucian polutan."),
+            plotlyOutput("scatter", height = "310px"),
+            tags$div(class = "mt-2", uiOutput("tafsir_parsial"))
+          )
         ),
         
         card(
-          card_header("Diagram Pencar Hubungan Ukuran Kebakaran vs AQI PM2,5"),
-          plotlyOutput("scatter", height = "340px"),
-          uiOutput("tafsir_parsial")
+          card_header("Ringkasan Uji Korelasi Bivariat vs Parsial (Kontrol Cuaca)"),
+          tags$div(
+            style = "overflow-x: auto;",
+            tableOutput("tbl_korelasi_ringkas")
+          )
         )
       )
     ),
@@ -258,11 +544,11 @@ ui <- page_sidebar(
         card_header("Parameter Pengujian Perbandingan Periode"),
         dateRangeInput(
           inputId = "periode_api",
-          label = "Tentukan Rentang Periode Karhutla (untuk Uji Hipotesis):",
-          start = "2026-08-15",
-          end = "2026-09-30",
+          label = "Tentukan Rentang Periode Karhutla (di dalam Rentang Tanggal Pengamatan):",
+          start = "2026-08-10",
+          end = "2026-08-31",
           min = "2026-07-15",
-          max = "2026-10-15",
+          max = Sys.Date(),
           format = "yyyy-mm-dd",
           language = "id",
           separator = " s/d "
@@ -366,6 +652,20 @@ ui <- page_sidebar(
 # 4. Logika Server Aplikasi
 server <- function(input, output, session) {
 
+  # Sinkronisasi otomatis batas tanggal periode_api di Tab 5 agar tetap di dalam input$tgl
+  observeEvent(input$tgl, {
+    req(input$tgl)
+    mid_tgl <- input$tgl[1] + floor(as.numeric(input$tgl[2] - input$tgl[1]) / 2)
+    updateDateRangeInput(
+      session,
+      "periode_api",
+      min = input$tgl[1],
+      max = input$tgl[2],
+      start = max(input$tgl[1], mid_tgl),
+      end = input$tgl[2]
+    )
+  })
+
   # 1. Reactive Polling Snapshot Titik Panas Satelit (NASA FIRMS)
   hotspots_snapshot <- reactivePoll(
     intervalMillis = 60000,
@@ -414,7 +714,6 @@ server <- function(input, output, session) {
   data_terfilter <- reactive({
     req(input$kota, input$tgl)
     
-    # Indikasi proses pemuatan data untuk transisi interaktif yang mulus
     withProgress(message = "Memperbarui data dan visualisasi...", value = 0.5, {
       df <- ambil_data_harian()
       
@@ -426,7 +725,6 @@ server <- function(input, output, session) {
         ) |>
         arrange(tanggal)
       
-      # Jika data harian belum tersedia untuk rentang ini, buat kerangka tanggal
       if (nrow(df_sub) == 0) {
         semua_tgl <- seq(input$tgl[1], input$tgl[2], by = "day")
         df_sub <- tibble(
@@ -435,17 +733,18 @@ server <- function(input, output, session) {
           pm25 = NA_real_,
           n_stasiun = 0L,
           sumber = "hotspots",
-          hujan_mm = 0.0,
-          suhu_c = 28.0,
-          angin_maks = 10.0,
-          titik_panas = 0L,
-          frp_total = 0.0
+          hujan_mm = NA_real_,
+          suhu_c = NA_real_,
+          angin_maks = NA_real_,
+          titik_panas = NA_integer_,
+          frp_total = NA_real_
         )
       }
 
-      # Tulis dan integrasikan data titik panas nyata dari hotspots_terfilter()
+      # Integrasikan titik panas nyata; tanggal di luar cakupan snapshot dibiarkan NA
       pts <- hotspots_terfilter()
       if (nrow(pts) > 0) {
+        rentang_hs <- range(pts$tanggal, na.rm = TRUE)
         hs_harian <- pts |>
           dplyr::group_by(tanggal) |>
           dplyr::summarise(
@@ -457,12 +756,20 @@ server <- function(input, output, session) {
         df_sub <- df_sub |>
           dplyr::left_join(hs_harian, by = "tanggal") |>
           dplyr::mutate(
-            titik_panas = as.integer(ifelse(!is.na(hs_titik), hs_titik, 0L)),
-            frp_total   = as.numeric(ifelse(!is.na(hs_frp), hs_frp, 0.0))
+            dalam_cakupan = tanggal >= rentang_hs[1] & tanggal <= rentang_hs[2],
+            titik_panas = dplyr::case_when(
+              !is.na(hs_titik) ~ as.integer(hs_titik),
+              dalam_cakupan ~ 0L,
+              TRUE ~ NA_integer_
+            ),
+            frp_total = dplyr::case_when(
+              !is.na(hs_frp) ~ as.numeric(hs_frp),
+              dalam_cakupan ~ 0.0,
+              TRUE ~ NA_real_
+            )
           ) |>
-          dplyr::select(-dplyr::any_of(c("hs_titik", "hs_frp")))
+          dplyr::select(-dplyr::any_of(c("hs_titik", "hs_frp", "dalam_cakupan")))
       } else {
-        # Bila tidak ada titik panas satelit terdeteksi pada rentang ini
         df_sub$titik_panas <- 0L
         df_sub$frp_total <- 0.0
       }
@@ -487,12 +794,21 @@ server <- function(input, output, session) {
       df_sub
     })
   })
+
+  # 4. Reactive Analisis Inferensial Dinamis (Tab 5 & Tab 6)
+  analisis_dinamis <- reactive({
+    req(input$tgl, input$periode_api)
+    df_sub <- data_terfilter()
+    df_all <- ambil_data_harian() |>
+      filter(tanggal >= input$tgl[1], tanggal <= input$tgl[2])
+    hitung_analisis_dinamis(df_sub, df_all, input$periode_api, input$lag_api)
+  })
   
   # --- LOGIKA VALUE BOXES (AREA B) ---
   
   output$kpi_rerata_aqi <- renderUI({
     df <- data_terfilter()
-    if (nrow(df) == 0) return(tags$span("-"))
+    if (nrow(df) == 0 || all(is.na(df$pm25))) return(tags$span("-"))
     
     rerata <- mean(df$pm25, na.rm = TRUE)
     warna_bg <- get_warna_aqi(rerata)
@@ -508,16 +824,16 @@ server <- function(input, output, session) {
   
   output$kpi_rerata_subteks <- renderText({
     df <- data_terfilter()
-    if (nrow(df) == 0) return("Tidak ada data")
+    if (nrow(df) == 0 || all(is.na(df$pm25))) return("Tidak ada data")
     rerata <- mean(df$pm25, na.rm = TRUE)
     paste("Kategori:", get_kategori_aqi(rerata))
   })
   
   output$kpi_kategori_dominan <- renderUI({
     df <- data_terfilter()
-    if (nrow(df) == 0) return(tags$span("-"))
+    if (nrow(df) == 0 || all(is.na(df$pm25))) return(tags$span("-"))
     
-    kat_list <- sapply(df$pm25, get_kategori_aqi)
+    kat_list <- sapply(df$pm25[!is.na(df$pm25)], get_kategori_aqi)
     tabel_kat <- sort(table(kat_list), decreasing = TRUE)
     kat_dom <- names(tabel_kat)[1]
     
@@ -526,10 +842,10 @@ server <- function(input, output, session) {
   
   output$kpi_kategori_subteks <- renderText({
     df <- data_terfilter()
-    if (nrow(df) == 0) return("")
-    kat_list <- sapply(df$pm25, get_kategori_aqi)
+    if (nrow(df) == 0 || all(is.na(df$pm25))) return("")
+    kat_list <- sapply(df$pm25[!is.na(df$pm25)], get_kategori_aqi)
     tabel_kat <- sort(table(kat_list), decreasing = TRUE)
-    paste0(format_id(tabel_kat[1], 0), " hari dari total ", nrow(df), " hari")
+    paste0(format_id(tabel_kat[1], 0), " hari dari total ", length(kat_list), " hari")
   })
   
   output$kpi_judul_api <- renderText({
@@ -537,8 +853,6 @@ server <- function(input, output, session) {
   })
   
   output$kpi_api_subteks <- renderText({
-    if (input$var_api == "frp_total") return("Data harian contoh")
-
     status <- hotspots_snapshot()$status
     if (is.null(status)) return("NASA FIRMS · menunggu pembaruan pertama")
     if (isTRUE(status$berhasil)) {
@@ -575,15 +889,15 @@ server <- function(input, output, session) {
   
   output$kpi_persen_tidak_sehat <- renderText({
     df <- data_terfilter()
-    if (nrow(df) == 0) return("")
+    n_valid <- sum(!is.na(df$pm25))
+    if (n_valid == 0) return("")
     n_unhealthy <- sum(df$pm25 > 100, na.rm = TRUE)
-    persen <- (n_unhealthy / nrow(df)) * 100
+    persen <- (n_unhealthy / n_valid) * 100
     paste0(format_id(persen, 1), "% dari periode terpilih")
   })
   
   # --- TAB 1: RINGKASAN ---
   
-  # Output: tbl_desk (Tabel Statistik Deskriptif)
   output$tbl_desk <- renderTable({
     df <- data_terfilter()
     validate(need(nrow(df) > 0, "Tidak ada data untuk pilihan ini."))
@@ -639,9 +953,8 @@ server <- function(input, output, session) {
     )
   }, striped = TRUE, hover = TRUE, bordered = TRUE, align = "lrrrrrrrrrr")
   
-  # Output: plot_kategori (Proporsi Hari per Kategori Kualitas Udara)
   output$plot_kategori <- renderPlotly({
-    df <- data_terfilter()
+    df <- data_terfilter() |> filter(!is.na(pm25))
     validate(need(nrow(df) > 0, "Tidak ada data untuk pilihan ini."))
     
     kategori_urutan <- c(
@@ -658,7 +971,7 @@ server <- function(input, output, session) {
       count(kategori, .drop = FALSE) |>
       mutate(persen = (n / sum(n)) * 100)
     
-    p <- plot_ly(
+    plot_ly(
       df_kat,
       x = ~kategori,
       y = ~persen,
@@ -679,11 +992,8 @@ server <- function(input, output, session) {
         paper_bgcolor = "#FFFFFF"
       ) |>
       config(displayModeBar = FALSE)
-    
-    p
   })
   
-  # Output: tbl_norm (Tabel Uji Normalitas Shapiro-Wilk)
   output$tbl_norm <- renderTable({
     df <- data_terfilter()
     validate(need(nrow(df) >= 3, "Diperlukan minimal 3 data untuk uji Shapiro-Wilk."))
@@ -712,7 +1022,6 @@ server <- function(input, output, session) {
   
   # --- TAB 2: TREN ---
   
-  # Output: plot_tren (Grafik Plotly Dua Sumbu)
   output$plot_tren <- renderPlotly({
     df <- data_terfilter()
     validate(need(nrow(df) > 0, "Tidak ada data untuk pilihan ini."))
@@ -721,7 +1030,6 @@ server <- function(input, output, session) {
     
     p <- plot_ly(df, x = ~tanggal)
     
-    # Sumbu Sekunder: Batang Aktivitas Kebakaran
     p <- p |> add_bars(
       y = ~api_nilai,
       name = label_api,
@@ -731,7 +1039,6 @@ server <- function(input, output, session) {
       text = ~sprintf("<b>%s</b><br>%s: %s", format(tanggal, "%d %b %Y"), label_api, format_id(api_nilai, 1))
     )
     
-    # Sumbu Primer: Garis AQI PM2.5 Harian
     p <- p |> add_lines(
       y = ~pm25,
       name = "AQI PM2,5 Harian",
@@ -742,7 +1049,6 @@ server <- function(input, output, session) {
       text = ~sprintf("<b>%s</b><br>AQI PM2,5: %s (%s)", format(tanggal, "%d %b %Y"), format_id(pm25, 1), sapply(pm25, get_kategori_aqi))
     )
     
-    # Sumbu Primer: Garis Rata-rata Bergerak
     p <- p |> add_lines(
       y = ~pm25_ma,
       name = sprintf("Rata-rata Bergerak (%d Hari)", input$ma_k),
@@ -751,8 +1057,7 @@ server <- function(input, output, session) {
       text = ~sprintf("<b>MA %d Hari:</b> %s", input$ma_k, format_id(pm25_ma, 1))
     )
     
-    # Garis Acuan Horizontal Ambang Batas AQI
-    p <- p |> layout(
+    p |> layout(
       xaxis = list(
         title = "Tanggal",
         type = "date",
@@ -774,14 +1079,12 @@ server <- function(input, output, session) {
         zeroline = FALSE
       ),
       shapes = list(
-        # Garis batas 100 (Sensitif)
         list(
           type = "line",
           x0 = min(df$tanggal), x1 = max(df$tanggal),
           y0 = 100, y1 = 100,
           line = list(color = "#FF7E00", width = 1.5, dash = "dot")
         ),
-        # Garis batas 150 (Tidak Sehat)
         list(
           type = "line",
           x0 = min(df$tanggal), x1 = max(df$tanggal),
@@ -809,13 +1112,10 @@ server <- function(input, output, session) {
       paper_bgcolor = "#FFFFFF"
     ) |>
       config(displayModeBar = FALSE)
-    
-    p
   })
   
   # --- TAB 3: PETA TITIK PANAS ---
   
-  # Output: n_titik (Teks Jumlah Titik Panas)
   output$n_titik <- renderText({
     pts <- hotspots_terfilter()
     deskripsi_peta <- if (nrow(pts) <= 2000L) {
@@ -831,7 +1131,6 @@ server <- function(input, output, session) {
     )
   })
   
-  # Output: peta (Peta Leaflet Sebaran Titik Panas)
   output$peta <- renderLeaflet({
     pts_sub <- hotspots_terfilter()
     coord <- get_koordinat_kota(input$kota)
@@ -841,7 +1140,6 @@ server <- function(input, output, session) {
     m <- leaflet() |>
       addProviderTiles(providers$OpenStreetMap.Mapnik) |>
       setView(lng = coord$lon, lat = coord$lat, zoom = coord$zoom) |>
-      # Marker Pusat Stasiun Kota
       addCircleMarkers(
         lng = coord$lon,
         lat = coord$lat,
@@ -852,7 +1150,6 @@ server <- function(input, output, session) {
         weight = 2,
         popup = sprintf("<strong>Pusat Stasiun:</strong> %s", input$kota)
       ) |>
-      # Lingkaran Radius Pengamatan 100 km (100.000 meter)
       addCircles(
         lng = coord$lon,
         lat = coord$lat,
@@ -991,18 +1288,35 @@ server <- function(input, output, session) {
   
   # --- TAB 4: HUBUNGAN ---
   
-  # Output: plot_lag (Bar Chart Korelasi Spearman per Lag Waktu)
+  hasil_hubungan <- reactive({
+    df <- data_terfilter()
+    validate(need(sum(!is.na(df$api_nilai) & !is.na(df$pm25)) >= 8, "Data berpasangan terlalu sedikit untuk menghitung korelasi lag."))
+    analisis_hubungan_lengkap(df, lag_dipilih = input$lag_api, max_lag = 7)
+  })
+  
+  observeEvent(event_data("plotly_click", source = "src_lag"), {
+    klik <- event_data("plotly_click", source = "src_lag")
+    if (!is.null(klik$x)) {
+      lag_baru <- as.integer(as.character(klik$x))
+      if (!is.na(lag_baru) && lag_baru >= 0 && lag_baru <= 7) {
+        updateSliderInput(session, "lag_api", value = lag_baru)
+      }
+    }
+  })
+  
   output$plot_lag <- renderPlotly({
-    analisis <- ambil_analisis()
-    df_lag <- analisis$korelasi_lag
+    df_lag <- hasil_hubungan()$df_lag
     
-    # Warna penanda: lag 2 disorot sebagai asosiasi puncak
-    warna_bars <- ifelse(df_lag$lag == 2, "#1F3A5F", "#94A3B8")
+    warna_bars <- ifelse(
+      df_lag$lag == input$lag_api, "#1F3A5F",
+      ifelse(df_lag$signifikan, "#64748B", "#CBD5E1")
+    )
     
-    p <- plot_ly(df_lag, x = ~factor(lag)) |>
+    plot_ly(df_lag, x = ~factor(lag), source = "src_lag", height = 310) |>
       add_bars(
         y = ~rho,
         marker = list(color = warna_bars),
+        textposition = "none",
         error_y = list(
           type = "data",
           symmetric = FALSE,
@@ -1013,58 +1327,35 @@ server <- function(input, output, session) {
         ),
         hoverinfo = "text",
         text = ~sprintf(
-          "<b>Lag %d Hari</b><br>Spearman rho: %s<br>95%% CI: [%s, %s]<br>p-value: %s",
+          "<b>Lag %d Hari</b><br>Spearman rho: %s<br>95%% CI: [%s, %s]<br>p-value: %s<br><i>(Klik untuk pilih lag ini)</i>",
           lag, format_id(rho, 2), format_id(ci_bawah, 2), format_id(ci_atas, 2),
-          if (p < 0.001) "< 0,001" else format_id(p, 4)
+          ifelse(is.na(p), "-", ifelse(p < 0.001, "< 0,001", format_id(p, 4)))
         )
       ) |>
       layout(
         xaxis = list(title = "Lag Waktu (Hari)"),
-        yaxis = list(title = "Koefisien Korelasi Spearman (rho)", range = c(0, 0.85)),
-        margin = list(t = 20, b = 40, l = 50, r = 20),
+        yaxis = list(title = "Korelasi Spearman (rho)", range = c(-1.05, 1.05)),
+        shapes = list(
+          list(
+            type = "line", x0 = -0.5, x1 = 7.5, y0 = 0, y1 = 0,
+            line = list(color = "#94A3B8", width = 1, dash = "dash")
+          )
+        ),
+        margin = list(t = 15, b = 45, l = 55, r = 20),
         plot_bgcolor = "#FFFFFF",
         paper_bgcolor = "#FFFFFF"
       ) |>
       config(displayModeBar = FALSE)
-    
-    p
   })
   
-  # Output: tafsir_lag (Kartu Interpretasi Korelasi Lag)
-  output$tafsir_lag <- renderUI({
-    analisis <- ambil_analisis()
-    kartu_interpretasi(
-      teks = analisis$tafsir_korelasi,
-      tipe = "info",
-      judul = "Interpretasi Asosiasi Korelasi Lag"
-    )
-  })
-  
-  # Output: tafsir_parsial (Kartu Interpretasi Korelasi Parsial)
-  output$tafsir_parsial <- renderUI({
-    analisis <- ambil_analisis()
-    p_data <- analisis$parsial
-    
-    teks_parsial <- sprintf(
-      "Setelah mengontrol variabel kovariat cuaca (curah hujan dan kecepatan angin) pada lag %d hari, koefisien korelasi parsial tetap bernilai positif (rho parsial = %s, p %s). Hal ini menunjukkan bahwa asosiasi antara ukuran kebakaran dan penurunan kualitas udara bersifat kokoh dan tidak semata-mata dipicu oleh faktor perancu cuaca.",
-      p_data$lag,
-      format_id(p_data$rho_parsial, 2),
-      if (p_data$p_parsial < 0.001) "< 0,001" else paste0("= ", format_id(p_data$p_parsial, 3))
-    )
-    
-    kartu_interpretasi(
-      teks = teks_parsial,
-      tipe = "success",
-      judul = "Interpretasi Asosiasi Korelasi Parsial (Kontrol Cuaca)"
-    )
-  })
-  
-  # Output: scatter (Diagram Pencar Ukuran Kebakaran vs AQI PM2,5)
   output$scatter <- renderPlotly({
     df <- data_terfilter()
     validate(need(nrow(df) > 0, "Tidak ada data untuk pilihan ini."))
     
-    df_plot <- df |> filter(!is.na(api_lag), !is.na(pm25))
+    df_plot <- df |>
+      filter(!is.na(api_lag), !is.na(pm25)) |>
+      mutate(kondisi_hujan = ifelse(!is.na(hujan_mm) & hujan_mm > 1, "Hari Hujan (>1 mm)", "Hari Kering (≤1 mm)"))
+    
     validate(need(nrow(df_plot) > 2, "Data lag tidak cukup untuk diagram pencar."))
     
     label_api <- if (input$var_api == "frp_total") {
@@ -1077,53 +1368,137 @@ server <- function(input, output, session) {
       df_plot,
       x = ~api_lag,
       y = ~pm25,
+      color = ~kondisi_hujan,
+      colors = c("Hari Kering (≤1 mm)" = "#1F3A5F", "Hari Hujan (>1 mm)" = "#0284C7"),
       type = "scatter",
       mode = "markers",
-      marker = list(
-        color = "#1F3A5F",
-        size = 7,
-        opacity = 0.75,
-        line = list(color = "#0F172A", width = 0.5)
-      ),
+      height = 310,
+      marker = list(size = 7.5, opacity = 0.8, line = list(color = "#0F172A", width = 0.5)),
       hoverinfo = "text",
-      text = ~sprintf("<b>%s</b><br>%s: %s<br>AQI PM2,5: %s", format(tanggal, "%d %b"), label_api, format_id(api_lag, 1), format_id(pm25, 1))
+      text = ~sprintf(
+        "<b>%s</b><br>%s: %s<br>AQI PM2,5: %s<br>Curah Hujan: %s mm",
+        format(tanggal, "%d %b %Y"), label_api, format_id(api_lag, 1), format_id(pm25, 1), format_id(hujan_mm, 1)
+      )
     )
     
-    # Garis tren regresi linear sederhana untuk visualisasi asosiasi
-    if (nrow(df_plot) >= 5) {
-      fit <- lm(pm25 ~ api_lag, data = df_plot)
-      df_plot$y_pred <- predict(fit)
+    if (nrow(df_plot) >= 8 && length(unique(df_plot$api_lag)) >= 5) {
+      df_sorted <- df_plot |> arrange(api_lag)
+      fit_loess <- suppressWarnings(loess(pm25 ~ api_lag, data = df_sorted, span = 0.85))
+      df_sorted$y_smooth <- predict(fit_loess)
+      
       p <- p |> add_lines(
+        data = df_sorted,
         x = ~api_lag,
-        y = ~y_pred,
-        line = list(color = "#D00000", width = 2),
-        hoverinfo = "none",
-        name = "Garis Tren Asosiasi"
+        y = ~y_smooth,
+        name = "Tren LOESS",
+        inherit = FALSE,
+        line = list(color = "#D00000", width = 2.2),
+        hoverinfo = "none"
       )
     }
     
-    p <- p |> layout(
+    p |> layout(
       xaxis = list(title = label_api, showgrid = TRUE, gridcolor = "#F1F5F9"),
       yaxis = list(title = "AQI PM2,5", showgrid = TRUE, gridcolor = "#F1F5F9"),
-      showlegend = FALSE,
-      margin = list(t = 20, b = 40, l = 50, r = 20),
+      shapes = list(
+        list(
+          type = "line", x0 = min(df_plot$api_lag), x1 = max(df_plot$api_lag),
+          y0 = 100, y1 = 100, line = list(color = "#FF7E00", width = 1.2, dash = "dot")
+        ),
+        list(
+          type = "line", x0 = min(df_plot$api_lag), x1 = max(df_plot$api_lag),
+          y0 = 150, y1 = 150, line = list(color = "#FF0000", width = 1.2, dash = "dot")
+        )
+      ),
+      legend = list(orientation = "h", x = 0, y = 1.12),
+      margin = list(t = 25, b = 45, l = 55, r = 20),
       plot_bgcolor = "#FFFFFF",
       paper_bgcolor = "#FFFFFF"
     ) |>
       config(displayModeBar = FALSE)
+  })
+  
+  output$tbl_korelasi_ringkas <- renderTable({
+    p_data <- hasil_hubungan()$parsial
+    validate(need(!is.na(p_data$rho_bivariat), "Data tidak cukup."))
     
-    p
+    ket_kekuatan <- function(r) {
+      ar <- abs(r)
+      if (ar >= 0.7) "Kuat"
+      else if (ar >= 0.4) "Sedang"
+      else if (ar >= 0.2) "Lemah"
+      else "Sangat Lemah"
+    }
+    
+    tibble(
+      `Jenis Korelasi (Lag Terpilih)` = c(
+        sprintf("Korelasi Rank Spearman Bivariat (Lag %d Hari)", p_data$lag),
+        sprintf("Korelasi Parsial Spearman (Kontrol Hujan & Angin, Lag %d Hari)", p_data$lag)
+      ),
+      `n` = c(as.integer(p_data$n), as.integer(p_data$n)),
+      `Koefisien (rho)` = c(format_id(p_data$rho_bivariat, 3), format_id(p_data$rho_parsial, 3)),
+      `Nilai p` = c(
+        ifelse(p_data$p_bivariat < 0.001, "< 0,001", format_id(p_data$p_bivariat, 4)),
+        ifelse(p_data$p_parsial < 0.001, "< 0,001", format_id(p_data$p_parsial, 4))
+      ),
+      `Kategori Kekuatan` = c(ket_kekuatan(p_data$rho_bivariat), ket_kekuatan(p_data$rho_parsial)),
+      `Kesimpulan Statistik (α = 0,05)` = c(
+        ifelse(p_data$p_bivariat < 0.05, "Signifikan", "Tidak Signifikan"),
+        ifelse(p_data$p_parsial < 0.05, "Signifikan (Kokoh terhadap Cuaca)", "Tidak Signifikan (Dipengaruhi Cuaca)")
+      )
+    )
+  }, striped = TRUE, hover = TRUE, bordered = TRUE, align = "lrrrcc")
+  
+  output$tafsir_lag <- renderUI({
+    df_lag <- hasil_hubungan()$df_lag |> filter(!is.na(rho))
+    validate(need(nrow(df_lag) > 0, ""))
+    
+    puncak <- df_lag[which.max(abs(df_lag$rho)), ]
+    terpilih <- df_lag |> filter(lag == input$lag_api)
+    
+    teks_lag <- sprintf(
+      "Pada %s, asosiasi terkuat terdeteksi pada lag %d hari (rho = %s, p %s). Pada lag yang sedang dipilih (%d hari), nilai korelasi Spearman adalah rho = %s (p %s).",
+      input$kota, puncak$lag, format_id(puncak$rho, 2),
+      ifelse(puncak$p < 0.001, "< 0,001", paste0("= ", format_id(puncak$p, 3))),
+      terpilih$lag, format_id(terpilih$rho, 2),
+      ifelse(terpilih$p < 0.001, "< 0,001", paste0("= ", format_id(terpilih$p, 3)))
+    )
+    
+    kartu_interpretasi(teks = teks_lag, tipe = "info", judul = "Interpretasi Asosiasi Korelasi Lag")
+  })
+  
+  output$tafsir_parsial <- renderUI({
+    p_data <- hasil_hubungan()$parsial
+    validate(need(!is.na(p_data$rho_parsial), ""))
+    
+    arah <- if (p_data$rho_parsial >= 0) "positif" else "negatif"
+    signif_teks <- if (p_data$p_parsial < 0.05) {
+      sprintf("tetap bernilai %s dan signifikan secara statistik (p < 0,05), menunjukkan hubungan yang tidak hilang setelah variabel cuaca dikontrol.", arah)
+    } else {
+      "melemah dan tidak signifikan secara statistik (p >= 0,05) setelah variabel cuaca dikontrol, mengindikasikan pengaruh kuat faktor meteorologi."
+    }
+    
+    teks_parsial <- sprintf(
+      "Setelah mengontrol variabel kovariat cuaca (curah hujan dan kecepatan angin) pada lag %d hari, koefisien korelasi parsial bernilai rho = %s (p %s), sehingga %s",
+      p_data$lag, format_id(p_data$rho_parsial, 2),
+      ifelse(p_data$p_parsial < 0.001, "< 0,001", paste0("= ", format_id(p_data$p_parsial, 3))),
+      signif_teks
+    )
+    
+    kartu_interpretasi(
+      teks = teks_parsial,
+      tipe = if (p_data$p_parsial < 0.05 && p_data$rho_parsial > 0) "success" else "warning",
+      judul = "Interpretasi Asosiasi Korelasi Parsial (Kontrol Cuaca)"
+    )
   })
   
   # --- TAB 5: PERBANDINGAN ---
   
-  # Output: ringkas_uji (Tabel Ringkasan Mann-Whitney U)
   output$ringkas_uji <- renderTable({
-    analisis <- ambil_analisis()
-    tabel_ringkas <- analisis$uji_dua_periode$ringkas
+    tabel_ringkas <- analisis_dinamis()$uji_dua_periode$ringkas
     
     tibble(
-      Periode = tabel_ringkas$periode,
+      Periode = as.character(tabel_ringkas$periode),
       n = as.integer(tabel_ringkas$n),
       `Median AQI` = format_id(tabel_ringkas$median, 1),
       IQR = format_id(tabel_ringkas$iqr, 1),
@@ -1131,28 +1506,27 @@ server <- function(input, output, session) {
     )
   }, striped = TRUE, hover = TRUE, bordered = TRUE, align = "lrrrr")
   
-  # Output: tbl_norm_periode (Uji Normalitas per Periode)
   output$tbl_norm_periode <- renderTable({
-    analisis <- ambil_analisis()
-    tabel_norm <- analisis$uji_dua_periode$normalitas
+    tabel_norm <- analisis_dinamis()$uji_dua_periode$normalitas
     
     tibble(
       `Kelompok Data` = tabel_norm$data,
       n = as.integer(tabel_norm$n),
       `Statistik W` = format_id(tabel_norm$W, 3),
-      `Nilai p` = if (tabel_norm$p < 0.001) "< 0,001" else format_id(tabel_norm$p, 4),
+      `Nilai p` = ifelse(is.na(tabel_norm$p), "-", ifelse(tabel_norm$p < 0.001, "< 0,001", format_id(tabel_norm$p, 4))),
       `Distribusi Normal` = ifelse(tabel_norm$normal, "Ya", "Tidak (Non-Normal)")
     )
   }, striped = TRUE, hover = TRUE, bordered = TRUE, align = "lrrrc")
   
-  # Output: tafsir_mw (Kesimpulan Mann-Whitney U)
   output$tafsir_mw <- renderUI({
-    analisis <- ambil_analisis()
-    mw <- analisis$uji_dua_periode
+    mw <- analisis_dinamis()$uji_dua_periode
+    validate(need(!is.na(mw$uji$p.value), "Pastikan kedua periode memiliki minimal 2 hari data di dalam rentang tanggal pengamatan."))
     
+    p_teks <- if (mw$uji$p.value < 0.001) "< 0,001" else paste0("= ", format_id(mw$uji$p.value, 4))
     teks_mw <- sprintf(
-      "Berdasarkan uji Mann-Whitney U (W = %d, p < 0,001), terdapat asosiasi perbedaan peringkat kualitas udara yang signifikan secara statistik antara periode normal (median AQI = %s) dan periode karhutla (median AQI = %s) dengan ukuran efek %s. Temuan ini mengindikasikan adanya asosiasi empiris yang substansial antara lonjakan kebakaran dan penurunan mutu udara.",
-      mw$uji$statistic,
+      "Berdasarkan uji Mann-Whitney U (W = %s, p %s), perbandingan peringkat kualitas udara antara periode normal (median AQI = %s) dan periode karhutla (median AQI = %s) menunjukkan ukuran efek %s.",
+      format_id(as.numeric(mw$uji$statistic), 0),
+      p_teks,
       format_id(mw$ringkas$median[1], 1),
       format_id(mw$ringkas$median[2], 1),
       mw$efek
@@ -1160,20 +1534,21 @@ server <- function(input, output, session) {
     
     kartu_interpretasi(
       teks = teks_mw,
-      tipe = "info",
+      tipe = if (mw$uji$p.value < 0.05) "info" else "warning",
       judul = "Kesimpulan Uji Mann-Whitney U (Asosiasi Dua Periode)"
     )
   })
   
-  # Output: tafsir_kw (Kesimpulan Kruskal-Wallis)
   output$tafsir_kw <- renderUI({
-    analisis <- ambil_analisis()
-    kw_info <- analisis$uji_antar_kota
+    kw_info <- analisis_dinamis()$uji_antar_kota
+    validate(need(!is.na(kw_info$kw$p.value), "Data antar kota tidak mencukupi."))
     
+    p_teks <- if (kw_info$kw$p.value < 0.001) "< 0,001" else paste0("= ", format_id(kw_info$kw$p.value, 4))
     teks_kw <- sprintf(
-      "Uji Kruskal-Wallis antar kota menunjukkan asosiasi variasi peringkat AQI PM2,5 yang sangat nyata antar wilayah pengamatan (H = %s, df = %d, p < 0,001, %s). Perbedaan tingkat paparan kabut asap antar kota menunjukkan tingkat disparitas yang signifikan.",
-      format_id(kw_info$kw$statistic, 2),
-      kw_info$kw$parameter,
+      "Uji Kruskal-Wallis antar kota menunjukkan variasi peringkat AQI PM2,5 antar wilayah pengamatan (H = %s, df = %d, p %s, %s).",
+      format_id(as.numeric(kw_info$kw$statistic), 2),
+      as.integer(kw_info$kw$parameter),
+      p_teks,
       kw_info$efek
     )
     
@@ -1184,14 +1559,15 @@ server <- function(input, output, session) {
     )
   })
   
-  # Output: tbl_dunn (Tabel Uji Lanjut Dunn DT)
   output$tbl_dunn <- renderDT({
-    analisis <- ambil_analisis()
-    dunn_df <- analisis$uji_antar_kota$dunn |>
+    dunn_raw <- analisis_dinamis()$uji_antar_kota$dunn
+    validate(need(nrow(dunn_raw) > 0, "Data tidak cukup untuk uji Dunn."))
+    
+    dunn_df <- dunn_raw |>
       mutate(
         `Perbandingan Kota` = paste(group1, "vs", group2),
         `Skor z` = format_id(z, 2),
-        `Nilai p (Adj. Holm)` = if (p.adj < 0.001) "< 0,001" else format_id(p.adj, 4),
+        `Nilai p (Adj. Holm)` = ifelse(p.adj < 0.001, "< 0,001", format_id(p.adj, 4)),
         Signifikansi = p.adj.signif
       ) |>
       select(`Perbandingan Kota`, `Skor z`, `Nilai p (Adj. Holm)`, Signifikansi)
@@ -1204,21 +1580,20 @@ server <- function(input, output, session) {
     )
   })
   
-  # Output: tbl_chisq (Tabel Persentase Baris Chi-Square)
   output$tbl_chisq <- renderTable({
-    analisis <- ambil_analisis()
-    analisis$chisq$persen_baris
+    analisis_dinamis()$chisq$persen_baris
   }, striped = TRUE, hover = TRUE, bordered = TRUE, align = "lcccccc")
   
-  # Output: tafsir_chisq (Kesimpulan Uji Chi-Square)
   output$tafsir_chisq <- renderUI({
-    analisis <- ambil_analisis()
-    cs <- analisis$chisq
+    cs <- analisis_dinamis()$chisq
+    validate(need(!is.na(cs$uji$p.value), "Tabel kontingensi memerlukan minimal 2 kategori AQI aktif di kedua periode."))
     
+    p_teks <- if (cs$uji$p.value < 0.001) "< 0,001" else paste0("= ", format_id(cs$uji$p.value, 4))
     teks_cs <- sprintf(
-      "Uji Chi-Square independensi menunjukkan asosiasi pergeseran proporsi kategori kualitas udara yang sangat signifikan antara periode normal dan karhutla (Chi² = %s, df = %d, p < 0,001, frekuensi harapan minimum = %s). Pada periode karhutla, proporsi hari dengan kategori Tidak Sehat hingga Berbahaya mendominasi secara drastis dibandingkan periode normal.",
-      format_id(cs$uji$statistic, 2),
-      cs$uji$parameter,
+      "Uji Chi-Square independensi menunjukkan pergeseran proporsi kategori kualitas udara antara periode normal dan karhutla (Chi² = %s, df = %d, p %s, frekuensi harapan minimum = %s).",
+      format_id(as.numeric(cs$uji$statistic), 2),
+      as.integer(cs$uji$parameter),
+      p_teks,
       format_id(cs$harapan_min, 1)
     )
     
@@ -1231,10 +1606,8 @@ server <- function(input, output, session) {
   
   # --- TAB 6: REGRESI ---
   
-  # Output: tbl_sampel (Ukuran Sampel)
   output$tbl_sampel <- renderTable({
-    analisis <- ambil_analisis()
-    s <- analisis$sampel
+    s <- analisis_dinamis()$sampel
     
     tibble(
       `Parameter` = c("Jumlah Observasi (n)", "Jumlah Prediktor (k)", "Syarat Min. Green (1991: 50 + 8k)", "Status Kelayakan Model"),
@@ -1242,41 +1615,33 @@ server <- function(input, output, session) {
         format_id(s$n, 0),
         format_id(s$k, 0),
         format_id(s$min_uji_model, 0),
-        ifelse(s$model_memadai, "Sampel Memadai (Terpenuhi)", "Sampel Kurang")
+        ifelse(s$model_memadai, "Sampel Memadai (Terpenuhi)", "Sampel Kurang (Perluas Rentang Tanggal)")
       )
     )
   }, striped = TRUE, bordered = TRUE)
   
-  # Output: tbl_hier (Regresi Hierarkis)
   output$tbl_hier <- renderTable({
-    analisis <- ambil_analisis()
-    h <- analisis$hierarkis
+    h <- analisis_dinamis()$hierarkis
     
     tibble(
       `Tingkatan Model` = c("Blok 1 (Hanya Kovariat Cuaca)", "Blok 2 (Cuaca + Ukuran Kebakaran)", "Perubahan Tambahan (Delta)"),
       `R²` = c(format_id(h$r2["blok1"], 2), format_id(h$r2["blok2"], 2), "-"),
       `ΔR²` = c("-", "-", format_id(h$delta_r2, 2)),
       `Statistik F` = c("-", "-", format_id(h$uji_perubahan$F, 2)),
-      `Nilai p` = c("-", "-", if (h$uji_perubahan$p < 0.001) "< 0,001" else format_id(h$uji_perubahan$p, 4))
+      `Nilai p` = c("-", "-", ifelse(is.na(h$uji_perubahan$p), "-", ifelse(h$uji_perubahan$p < 0.001, "< 0,001", format_id(h$uji_perubahan$p, 4))))
     )
   }, striped = TRUE, bordered = TRUE, align = "lrrrr")
   
-  # Output: tbl_koef (Koefisien OLS Standar)
   output$tbl_koef <- renderTable({
-    analisis <- ambil_analisis()
-    analisis$koef
+    analisis_dinamis()$koef
   }, striped = TRUE, bordered = TRUE, align = "lrrrr")
   
-  # Output: tbl_hac (Koefisien Kebal Autokorelasi HAC)
   output$tbl_hac <- renderTable({
-    analisis <- ambil_analisis()
-    analisis$koef_hac
+    analisis_dinamis()$koef_hac
   }, striped = TRUE, bordered = TRUE, align = "lrrrr")
   
-  # Output: tbl_asumsi (Uji Asumsi Klasik dengan Badge)
   output$tbl_asumsi <- renderUI({
-    analisis <- ambil_analisis()
-    df_asumsi <- analisis$asumsi
+    df_asumsi <- analisis_dinamis()$asumsi
     
     baris_html <- lapply(seq_len(nrow(df_asumsi)), function(i) {
       catatan <- if (!df_asumsi$lolos[i] && grepl("Autokorelasi", df_asumsi$uji[i])) {
@@ -1307,10 +1672,8 @@ server <- function(input, output, session) {
     )
   })
   
-  # Output: tbl_vif (Tabel Multikolinearitas VIF)
   output$tbl_vif <- renderTable({
-    analisis <- ambil_analisis()
-    v <- analisis$vif
+    v <- analisis_dinamis()$vif
     
     tibble(
       `Prediktor Model` = v$prediktor,
@@ -1320,7 +1683,6 @@ server <- function(input, output, session) {
     )
   }, striped = TRUE, bordered = TRUE, align = "lrrr")
   
-  # Output: teks_outlier (Teks Interpretasi Outlier & Cook's Distance)
   output$teks_outlier <- renderUI({
     kartu_interpretasi(
       teks = "Pemeriksaan amatan ekstrem dan jarak Cook (Cook's Distance) menunjukkan tidak ada observasi dengan Cook's D > 0,5 yang berpotensi menjadi titik berpengaruh berlebih (leverage tinggi yang merusak stabilitas estimasi). Seluruh nilai ekstrem dipertahankan dalam analisis karena merupakan cerminan empiris fenomena karhutla ekstrem yang nyata dan bukan akibat galat pencatatan.",
@@ -1329,32 +1691,43 @@ server <- function(input, output, session) {
     )
   })
   
-  # Output: plot_diag (Empat Grafik Diagnostik Residual)
   output$plot_diag <- renderPlot({
-    df <- data_terfilter()
+    df <- data_terfilter() |>
+      mutate(pred_api = if (input$lag_api > 0) api_lag else api_nilai) |>
+      filter(!is.na(pm25), !is.na(pred_api))
     if (nrow(df) < 10) {
       plot.new()
       text(0.5, 0.5, "Data tidak cukup untuk plot diagnostik", cex = 1.2)
       return()
     }
     
-    # Model regresi linier pada data harian terfilter
-    fit <- lm(pm25 ~ api_nilai + hujan_mm + angin_maks, data = df)
+    kandidat_cuaca <- c("hujan_mm", "suhu_c", "angin_maks")
+    cuaca_valid <- kandidat_cuaca[vapply(kandidat_cuaca, function(v) {
+      v %in% names(df) && sum(!is.na(df[[v]])) > 5 && stats::sd(df[[v]], na.rm = TRUE) > 0
+    }, logical(1))]
+    f_diag <- stats::as.formula(paste("pm25 ~", paste(c("pred_api", cuaca_valid), collapse = " + ")))
+    fit <- stats::lm(f_diag, data = df)
     
     par(mfrow = c(2, 2), mar = c(4.2, 4.2, 2.5, 1.5), oma = c(0, 0, 0, 0))
-    plot(fit, which = 1:4, pch = 16, col = "rgba(31, 58, 95, 0.65)")
+    plot(fit, which = 1:4, pch = 16, col = adjustcolor("#1F3A5F", alpha.f = 0.65))
   })
   
-  # Output: plot_acf (Fungsi Autokorelasi Residual)
   output$plot_acf <- renderPlot({
-    df <- data_terfilter()
+    df <- data_terfilter() |>
+      mutate(pred_api = if (input$lag_api > 0) api_lag else api_nilai) |>
+      filter(!is.na(pm25), !is.na(pred_api))
     if (nrow(df) < 10) {
       plot.new()
       text(0.5, 0.5, "Data tidak cukup untuk plot ACF", cex = 1.2)
       return()
     }
     
-    fit <- lm(pm25 ~ api_nilai + hujan_mm + angin_maks, data = df)
+    kandidat_cuaca <- c("hujan_mm", "suhu_c", "angin_maks")
+    cuaca_valid <- kandidat_cuaca[vapply(kandidat_cuaca, function(v) {
+      v %in% names(df) && sum(!is.na(df[[v]])) > 5 && stats::sd(df[[v]], na.rm = TRUE) > 0
+    }, logical(1))]
+    f_diag <- stats::as.formula(paste("pm25 ~", paste(c("pred_api", cuaca_valid), collapse = " + ")))
+    fit <- stats::lm(f_diag, data = df)
     res <- residuals(fit)
     
     par(mar = c(4.2, 4.2, 2.5, 1.5))
@@ -1371,7 +1744,6 @@ server <- function(input, output, session) {
   
   # --- TAB 7: METODOLOGI ---
   
-  # Output: metodologi (Dokumentasi Lengkap Metodologi)
   output$metodologi <- renderUI({
     tags$div(
       class = "p-2",
