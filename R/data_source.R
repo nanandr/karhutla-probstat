@@ -664,6 +664,7 @@ perbarui_hotspots_harian <- function(
   gabungan <- snapshot
   progres_produk <- if (!is.null(status$produk)) status$produk else list()
   rentang_diperbarui <- list()
+  kesalahan_refresh <- NULL
 
   for (produk in produk_refresh) {
     metadata <- ketersediaan[ketersediaan$produk == produk, , drop = FALSE]
@@ -720,13 +721,24 @@ perbarui_hotspots_harian <- function(
       fileext = ".rds"
     )
     on.exit(unlink(file_unduhan, force = TRUE), add = TRUE)
-    terbaru <- unduh_hotspots_firms(
-      tanggal_mulai_produk,
-      tanggal_akhir_produk,
-      kota = kota,
-      file = file_unduhan,
-      produk = produk
+    unduhan <- tryCatch(
+      list(
+        data = unduh_hotspots_firms(
+          tanggal_mulai_produk,
+          tanggal_akhir_produk,
+          kota = kota,
+          file = file_unduhan,
+          produk = produk
+        ),
+        pesan = NULL
+      ),
+      error = function(e) list(data = NULL, pesan = conditionMessage(e))
     )
+    if (!is.null(unduhan$pesan)) {
+      kesalahan_refresh <- sprintf("%s: %s", produk, unduhan$pesan)
+      break
+    }
+    terbaru <- unduhan$data
     gabungan <- gabungkan_snapshot_hotspots(
       gabungan,
       terbaru,
@@ -744,6 +756,9 @@ perbarui_hotspots_harian <- function(
     rentang_diperbarui[[produk]] <- c(tanggal_mulai_produk, tanggal_akhir_produk)
   }
   if (length(rentang_diperbarui) == 0L) {
+    if (!is.null(kesalahan_refresh)) {
+      stop(kesalahan_refresh, call. = FALSE)
+    }
     stop("Tidak ada rentang data NASA FIRMS yang tersedia untuk diperbarui.", call. = FALSE)
   }
 
@@ -772,7 +787,10 @@ perbarui_hotspots_harian <- function(
   }
 
   hasil <- list(
-    berhasil = TRUE,
+    berhasil = is.null(kesalahan_refresh),
+    snapshot_diperbarui = TRUE,
+    parsial = !is.null(kesalahan_refresh),
+    pesan = kesalahan_refresh,
     tanggal = Sys.Date(),
     waktu = Sys.time(),
     tanggal_mulai = min(vapply(rentang_diperbarui, function(x) as.numeric(x[1]), numeric(1))),
@@ -783,6 +801,12 @@ perbarui_hotspots_harian <- function(
   hasil$tanggal_mulai <- as.Date(hasil$tanggal_mulai, origin = "1970-01-01")
   hasil$tanggal_selesai <- as.Date(hasil$tanggal_selesai, origin = "1970-01-01")
   simpan_status_pembaruan_hotspots(hasil, file)
+  if (!is.null(kesalahan_refresh)) {
+    message(
+      "Pembaruan NASA FIRMS terhenti setelah sebagian data berhasil disimpan: ",
+      kesalahan_refresh
+    )
+  }
   message(sprintf(
     "Snapshot NASA FIRMS diperbarui hingga %s (%s piksel).",
     format(hasil$tanggal_selesai, "%Y-%m-%d"),
@@ -795,9 +819,6 @@ perbarui_hotspots_harian <- function(
 jalankan_refresh_hotspots_latar <- function(
   script = "scripts/refresh_hotspots.R"
 ) {
-  if (isTRUE(getOption("karhutla.disable_hotspot_autorefresh"))) {
-    return(invisible(FALSE))
-  }
   if (!file.exists(script)) {
     stop("Worker pembaruan hotspot tidak ditemukan.", call. = FALSE)
   }
