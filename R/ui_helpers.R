@@ -90,7 +90,7 @@ badge_kategori <- function(kategori) {
     "Tidak Sehat" = AQI_LEVELS$tidak_sehat$warna,
     "Sangat Tidak Sehat" = AQI_LEVELS$sangat_tidak_sehat$warna,
     "Berbahaya" = AQI_LEVELS$berbahaya$warna,
-    "#CBD5E1"
+    "#D5E4DB"
   )
   warna_teks <- if (kategori %in% c("Tidak Sehat", "Sangat Tidak Sehat", "Berbahaya")) "#FFFFFF" else "#1B2733"
   
@@ -107,13 +107,15 @@ badge_asumsi <- function(lolos, catatan = NULL) {
     badge <- tags$span(
       class = "badge bg-success-subtle text-success-emphasis border border-success-subtle",
       style = "font-weight: 600; padding: 5px 10px; font-size: 0.85rem;",
-      HTML("&#10003; Terpenuhi")
+      icon("check", `aria-hidden` = "true"),
+      " Terpenuhi"
     )
   } else {
     badge <- tags$span(
       class = "badge bg-danger-subtle text-danger-emphasis border border-danger-subtle",
       style = "font-weight: 600; padding: 5px 10px; font-size: 0.85rem;",
-      HTML("&#10007; Tidak terpenuhi")
+      icon("times", `aria-hidden` = "true"),
+      " Tidak terpenuhi"
     )
   }
   
@@ -154,9 +156,9 @@ kartu_interpretasi <- function(teks, tipe = c("info", "warning", "success"), jud
   
   ikon <- switch(
     tipe,
-    "info" = tags$span(style = "color: #1F3A5F; font-size: 1.25rem; margin-right: 8px;", HTML("&#9432;")),
-    "warning" = tags$span(style = "color: #D97706; font-size: 1.25rem; margin-right: 8px;", HTML("&#9888;")),
-    "success" = tags$span(style = "color: #16A34A; font-size: 1.25rem; margin-right: 8px;", HTML("&#10003;"))
+    "info" = icon("info-circle", class = "interpretation-icon", `aria-hidden` = "true"),
+    "warning" = icon("exclamation-triangle", class = "interpretation-icon", `aria-hidden` = "true"),
+    "success" = icon("check-circle", class = "interpretation-icon", `aria-hidden` = "true")
   )
   
   tags$div(
@@ -164,7 +166,7 @@ kartu_interpretasi <- function(teks, tipe = c("info", "warning", "success"), jud
     tags$div(
       class = "kartu-interpretasi-header d-flex align-items-center mb-1",
       ikon,
-      tags$strong(style = "color: #1F3A5F; font-size: 0.95rem;", judul)
+      tags$strong(style = "color: #173E3A; font-size: 0.95rem;", judul)
     ),
     tags$div(
       class = "kartu-interpretasi-body",

@@ -279,11 +279,26 @@ Untuk `plot_diag` dan `plot_acf` pada mockup, boleh menjalankan `lm()` sederhana
 
 | Peran | Warna |
 | --- | --- |
-| Primer (judul, tombol, tab aktif) | `#1F3A5F` |
-| Latar halaman | `#F5F7FA` |
+| Primer (judul, tombol, tab aktif) | `#173E3A` |
+| Hijau sekunder / mint | `#28685F` / `#69B98A` |
+| Latar halaman | `#F4F8F5` |
 | Kartu | `#FFFFFF`, bayangan halus, sudut membulat |
-| Teks utama | `#1B2733` |
+| Teks utama | `#1B2F26` |
 | Titik panas (gradasi) | `#FFB703` → `#FB8500` → `#D00000` |
+
+**Gaya diagram**
+
+- Gunakan palet hijau hutan, hijau sedang, dan mint seperti contoh; hindari aksen biru.
+- Bar diberi jarak dan pola diagonal dipakai untuk nilai yang tidak signifikan. Gunakan label/tooltip agar pola tetap punya arti yang jelas.
+- Garis, titik, kisi, tipografi, latar putih, dan label tooltip konsisten antardiagram.
+- Pertahankan warna kategori AQI resmi dan gradasi hotspot karena keduanya menyampaikan tingkat risiko.
+
+**Responsivitas dan ikon**
+
+- Pada layar sempit, susun kartu dan diagram dalam satu kolom; tampilkan KPI dalam dua kolom.
+- Samakan tinggi seluruh kartu KPI agar barisnya tetap rapi pada setiap breakpoint.
+- Gunakan sidebar yang dapat ditutup di ponsel, serta gulirkan tab dan tabel secara horizontal tanpa memperlebar halaman.
+- Gunakan ikon dari `shiny::icon()` (Font Awesome yang sudah tersedia); hindari emoji dan ketergantungan CDN.
 
 **Kategori AQI dan Tabel Breakpoint Resmi (Standar US EPA / EPA-454/B-18-007)**
 

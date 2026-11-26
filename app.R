@@ -291,13 +291,45 @@ hitung_analisis_dinamis <- function(df_sub, df_semua_kota, periode_karhutla, lag
 }
 
 # 2. Konfigurasi Tema UI (bslib Bootstrap 5)
+warna_diagram <- list(
+  primer = "#173E3A",
+  sekunder = "#28685F",
+  mint = "#69B98A",
+  pucat = "#DDEBE2",
+  kisi = "#E6EEE8",
+  teks = "#456055",
+  putih = "#FFFFFF"
+)
+
+tema_diagram <- theme_minimal(base_size = 10, base_family = "Segoe UI") +
+  theme(
+    plot.background = element_rect(fill = warna_diagram$putih, color = NA),
+    panel.background = element_rect(fill = warna_diagram$putih, color = NA),
+    panel.grid.major = element_line(color = warna_diagram$kisi, linewidth = 0.35),
+    panel.grid.minor = element_blank(),
+    axis.text = element_text(color = warna_diagram$teks),
+    axis.title = element_text(color = warna_diagram$teks),
+    strip.background = element_rect(fill = "#EFF7F1", color = warna_diagram$pucat, linewidth = 0.35),
+    strip.text = element_text(color = warna_diagram$primer, face = "bold"),
+    plot.margin = margin(8, 10, 8, 8)
+  )
+
+plot_kosong <- function(pesan) {
+  ggplot() +
+    annotate("text", x = 0, y = 0, label = pesan, color = warna_diagram$teks, size = 4) +
+    xlim(-1, 1) +
+    ylim(-1, 1) +
+    theme_void() +
+    theme(plot.background = element_rect(fill = warna_diagram$putih, color = NA))
+}
+
 tema_dashboard <- bs_theme(
   version = 5,
-  bg = "#F5F7FA",
-  fg = "#1B2733",
-  primary = "#1F3A5F",
-  secondary = "#5A6A80",
-  success = "#16A34A",
+  bg = "#F4F8F5",
+  fg = "#1B2F26",
+  primary = warna_diagram$primer,
+  secondary = warna_diagram$teks,
+  success = warna_diagram$sekunder,
   warning = "#D97706",
   danger = "#D00000",
   base_font = font_collection("-apple-system", "BlinkMacSystemFont", "Segoe UI", "Roboto", "sans-serif")
@@ -307,7 +339,7 @@ ticker_berita_ui <- tags$div(
   class = "karhutla-ticker",
   tags$div(
     class = "ticker-label",
-    icon("fire"),
+    icon("fire", `aria-hidden` = "true"),
     tags$span("KARHUTLA TERKINI")
   ),
   tags$div(
@@ -331,7 +363,7 @@ ticker_berita_ui <- tags$div(
   ),
   tags$div(
     class = "ticker-firms",
-    icon("satellite"),
+    icon("satellite", `aria-hidden` = "true"),
     tags$strong("NASA FIRMS"),
     " · ",
     tags$span(id = "ticker-clock", class = "ticker-clock", "Memuat jam..."),
@@ -343,16 +375,26 @@ ticker_berita_ui <- tags$div(
 # 3. Definisi Antarmuka Pengguna (UI)
 ui <- page_sidebar(
   title = tags$div(
-    class = "d-flex align-items-center gap-2",
-    tags$span(style = "color: #1F3A5F; font-size: 1.35rem; font-weight: 700;", "Dashboard Kualitas Udara & Karhutla Kalimantan"),
-    tags$span(class = "badge bg-primary-subtle text-primary border border-primary-subtle small ms-2", "Server Lokal")
+    class = "d-flex align-items-center gap-3",
+    tags$span(class = "brand-mark", icon("leaf", `aria-hidden` = "true")),
+    tags$div(
+      tags$span(class = "app-title", "Dashboard Lingkungan"),
+      tags$span(class = "app-subtitle d-block", "Kualitas Udara & Karhutla Kalimantan")
+    ),
+    tags$span(class = "badge server-badge ms-2", "Server Lokal")
   ),
   theme = tema_dashboard,
   
   # Area A: Sidebar Filter Global
   sidebar = sidebar(
     width = 320,
-    title = tags$span(style = "font-weight: 600; color: #1F3A5F;", "Filter & Parameter"),
+    open = list(desktop = "open", mobile = "closed"),
+    class = "filters-sidebar",
+    title = tags$div(
+      class = "filter-title",
+      icon("sliders", `aria-hidden` = "true"),
+      tags$span("Filter & Parameter")
+    ),
     
     selectInput(
       inputId = "kota",
@@ -414,17 +456,37 @@ ui <- page_sidebar(
   
   # Banner Peringatan Data Contoh (Muncul Otomatis Saat DATA_CONTOH == TRUE)
   banner_data_contoh(),
+  tags$div(
+    class = "dashboard-heading",
+    tags$div(
+      tags$h1("Ringkasan Lingkungan"),
+      tags$p("Pantau kualitas udara, aktivitas karhutla, dan hasil analisis dalam satu tampilan.")
+    ),
+    tags$div(
+      class = "dashboard-heading-actions",
+      tags$span(class = "data-window-badge", icon("calendar", `aria-hidden` = "true"), textOutput("status_rentang", inline = TRUE)),
+      actionButton(
+        inputId = "perbarui_hotspots",
+        label = tagList(icon("refresh", `aria-hidden` = "true"), tags$span("Perbarui data")),
+        class = "dashboard-primary-action"
+      )
+    )
+  ),
   ticker_berita_ui,
   
   # Area B: Baris Kartu Indikator Utama (KPI)
+  # Keep KPI rows content-sized so cards stay compact at narrower widths.
   layout_columns(
+    class = "kpi-grid",
+    fill = FALSE,
+    fillable = FALSE,
     col_widths = c(3, 3, 3, 3),
     
     # KPI 1: Rata-rata AQI PM2.5
     value_box(
       title = "Rata-rata AQI PM2,5",
       value = uiOutput("kpi_rerata_aqi"),
-      showcase = tags$span(style = "font-size: 2rem;", HTML("&#127787;")),
+      showcase = icon("cloud", class = "kpi-showcase", `aria-hidden` = "true"),
       theme = "primary",
       p(class = "small mb-0", textOutput("kpi_rerata_subteks"))
     ),
@@ -433,7 +495,7 @@ ui <- page_sidebar(
     value_box(
       title = "Kategori Dominan",
       value = uiOutput("kpi_kategori_dominan"),
-      showcase = tags$span(style = "font-size: 2rem;", HTML("&#127991;")),
+      showcase = icon("tag", class = "kpi-showcase", `aria-hidden` = "true"),
       theme = "light",
       p(class = "small mb-0 text-muted", textOutput("kpi_kategori_subteks"))
     ),
@@ -442,7 +504,7 @@ ui <- page_sidebar(
     value_box(
       title = textOutput("kpi_judul_api"),
       value = uiOutput("kpi_total_api"),
-      showcase = tags$span(style = "font-size: 2rem;", HTML("&#128293;")),
+      showcase = icon("fire", class = "kpi-showcase", `aria-hidden` = "true"),
       theme = "light",
       p(class = "small mb-0 text-muted", textOutput("kpi_api_subteks"))
     ),
@@ -451,7 +513,7 @@ ui <- page_sidebar(
     value_box(
       title = "Hari Tidak Sehat (AQI > 100)",
       value = uiOutput("kpi_hari_tidak_sehat"),
-      showcase = tags$span(style = "font-size: 2rem;", HTML("&#9888;")),
+      showcase = icon("exclamation-triangle", class = "kpi-showcase", `aria-hidden` = "true"),
       theme = "danger",
       p(class = "small mb-0", textOutput("kpi_persen_tidak_sehat"))
     )
@@ -521,15 +583,7 @@ ui <- page_sidebar(
         card_header(
           tags$div(
             class = "d-flex justify-content-between align-items-center flex-wrap gap-3",
-            tags$span("Sebaran Spasial Titik Panas Satelit (NASA FIRMS)"),
-            actionButton(
-              inputId = "perbarui_hotspots",
-              label = tagList(
-                icon("refresh"),
-                tags$span("Perbarui data terbaru")
-              ),
-              class = "btn-refresh-hotspots"
-            )
+              tags$span("Sebaran Spasial Titik Panas Satelit (NASA FIRMS)")
           )
         ),
         tags$div(
@@ -668,7 +722,10 @@ ui <- page_sidebar(
       ),
       
       layout_columns(
+        class = "diagnostic-grid",
         col_widths = c(7, 5),
+        height = "500px",
+        min_height = "500px",
         
         card(
           card_header("Empat Plot Diagnostik Residual Model"),
@@ -755,7 +812,11 @@ ui <- htmltools::tagAppendChild(
 )
 ui <- htmltools::tagList(
   tags$head(
-    tags$link(rel = "stylesheet", type = "text/css", href = "styles.css"),
+    tags$link(
+      rel = "stylesheet",
+      type = "text/css",
+      href = paste0("styles.css?v=", unname(tools::md5sum(file.path("www", "styles.css"))))
+    ),
   tags$link(rel = "icon", type = "image/x-icon", href = "Frame%20798.ico"),
   tags$script(src = "news-ticker.js", defer = NA)
   ),
@@ -764,6 +825,11 @@ ui <- htmltools::tagList(
 
 # 4. Logika Server Aplikasi
 server <- function(input, output, session) {
+
+  output$status_rentang <- renderText({
+    req(input$tgl)
+    paste(format(input$tgl[1], "%d %b"), "-", format(input$tgl[2], "%d %b %Y"))
+  })
 
   # 1. Pantau snapshot agar hasil worker yang diminta pengguna segera tampil
   # Sinkronisasi otomatis batas tanggal periode_api di Tab 5 agar tetap di dalam input$tgl
@@ -809,7 +875,7 @@ server <- function(input, output, session) {
         showNotification(
           tags$div(
             class = "refresh-process-notification",
-            icon("refresh", class = "fa-spin"),
+            icon("refresh", class = "fa-spin", `aria-hidden` = "true"),
             tags$span(
               "Memperbarui hotspot NASA FIRMS."
             )
@@ -1232,15 +1298,30 @@ server <- function(input, output, session) {
       type = "bar",
       marker = list(
         color = warna_vektor,
-        line = list(color = "#1B2733", width = 0.5)
+        line = list(color = warna_diagram$putih, width = 1.2)
       ),
       hoverinfo = "text",
       text = ~sprintf("<b>%s</b><br>Jumlah Hari: %d<br>Persentase: %s%%", kategori, n, format_id(persen, 1))
     ) |>
       layout(
         title = list(text = "", font = list(size = 14)),
-        xaxis = list(title = "", tickangle = -20),
-        yaxis = list(title = "Persentase Hari (%)", range = c(0, max(df_kat$persen, 20) + 10)),
+        xaxis = list(
+          title = "",
+          tickangle = -20,
+          tickfont = list(color = warna_diagram$teks),
+          linecolor = warna_diagram$kisi
+        ),
+        yaxis = list(
+          title = "Persentase Hari (%)",
+          range = c(0, max(df_kat$persen, 20) + 10),
+          titlefont = list(color = warna_diagram$teks),
+          tickfont = list(color = warna_diagram$teks),
+          gridcolor = warna_diagram$kisi,
+          zerolinecolor = warna_diagram$kisi
+        ),
+        font = list(family = "Segoe UI, sans-serif", size = 11, color = warna_diagram$teks),
+        bargap = 0.32,
+        hoverlabel = list(bgcolor = warna_diagram$putih, bordercolor = warna_diagram$sekunder),
         margin = list(t = 20, b = 60, l = 50, r = 20),
         plot_bgcolor = "#FFFFFF",
         paper_bgcolor = "#FFFFFF"
@@ -1296,8 +1377,8 @@ server <- function(input, output, session) {
     p <- p |> add_lines(
       y = ~pm25,
       name = "AQI PM2,5 Harian",
-      line = list(color = "#1F3A5F", width = 2.2),
-      marker = list(color = "#1F3A5F", size = 4),
+      line = list(color = warna_diagram$primer, width = 2.4),
+      marker = list(color = warna_diagram$primer, size = 5),
       mode = "lines+markers",
       hoverinfo = "text",
       text = ~sprintf("<b>%s</b><br>AQI PM2,5: %s (%s)", format(tanggal, "%d %b %Y"), format_id(pm25, 1), sapply(pm25, get_kategori_aqi))
@@ -1306,7 +1387,7 @@ server <- function(input, output, session) {
     p <- p |> add_lines(
       y = ~pm25_ma,
       name = sprintf("Rata-rata Bergerak (%d Hari)", input$ma_k),
-      line = list(color = "#0284C7", width = 2, dash = "dash"),
+      line = list(color = warna_diagram$mint, width = 2.2, dash = "dash"),
       hoverinfo = "text",
       text = ~sprintf("<b>MA %d Hari:</b> %s", input$ma_k, format_id(pm25_ma, 1))
     )
@@ -1317,12 +1398,14 @@ server <- function(input, output, session) {
         type = "date",
         tickformat = "%d %b\n%Y",
         showgrid = TRUE,
-        gridcolor = "#F1F5F9"
+        gridcolor = warna_diagram$kisi,
+        linecolor = warna_diagram$kisi
       ),
       yaxis = list(
         title = "AQI PM2,5 (US EPA)",
         showgrid = TRUE,
-        gridcolor = "#F1F5F9",
+        gridcolor = warna_diagram$kisi,
+        linecolor = warna_diagram$kisi,
         zeroline = FALSE
       ),
       yaxis2 = list(
@@ -1361,6 +1444,8 @@ server <- function(input, output, session) {
         )
       ),
       legend = list(orientation = "h", x = 0, y = 1.15),
+      font = list(family = "Segoe UI, sans-serif", size = 11, color = warna_diagram$teks),
+      hoverlabel = list(bgcolor = warna_diagram$putih, bordercolor = warna_diagram$sekunder),
       margin = list(t = 40, b = 40, l = 50, r = 50),
       plot_bgcolor = "#FFFFFF",
       paper_bgcolor = "#FFFFFF"
@@ -1398,8 +1483,8 @@ server <- function(input, output, session) {
         lng = coord$lon,
         lat = coord$lat,
         radius = 8,
-        color = "#1F3A5F",
-        fillColor = "#1F3A5F",
+        color = warna_diagram$primer,
+        fillColor = warna_diagram$primer,
         fillOpacity = 0.9,
         weight = 2,
         popup = sprintf("<strong>Pusat Stasiun:</strong> %s", input$kota)
@@ -1408,9 +1493,9 @@ server <- function(input, output, session) {
         lng = coord$lon,
         lat = coord$lat,
         radius = 100000,
-        color = "#1F3A5F",
+        color = warna_diagram$primer,
         weight = 1.5,
-        fillColor = "#1F3A5F",
+        fillColor = warna_diagram$primer,
         fillOpacity = 0.05,
         popup = "Radius Pengamatan Analisis 100 km"
       )
@@ -1562,21 +1647,30 @@ server <- function(input, output, session) {
     df_lag <- hasil_hubungan()$df_lag
     
     warna_bars <- ifelse(
-      df_lag$lag == input$lag_api, "#1F3A5F",
-      ifelse(df_lag$signifikan, "#64748B", "#CBD5E1")
+      df_lag$lag == input$lag_api, warna_diagram$primer,
+      ifelse(df_lag$signifikan, warna_diagram$mint, warna_diagram$pucat)
+    )
+    pola_bars <- ifelse(
+      df_lag$lag == input$lag_api | df_lag$signifikan,
+      "",
+      "/"
     )
     
     plot_ly(df_lag, x = ~factor(lag), source = "src_lag", height = 310) |>
       add_bars(
         y = ~rho,
-        marker = list(color = warna_bars),
+        marker = list(
+          color = warna_bars,
+          line = list(color = warna_diagram$putih, width = 1),
+          pattern = list(shape = pola_bars, fgcolor = warna_diagram$sekunder, solidity = 0.18)
+        ),
         textposition = "none",
         error_y = list(
           type = "data",
           symmetric = FALSE,
           array = ~ (ci_atas - rho),
           arrayminus = ~ (rho - ci_bawah),
-          color = "#334155",
+          color = warna_diagram$sekunder,
           width = 3
         ),
         hoverinfo = "text",
@@ -1587,15 +1681,43 @@ server <- function(input, output, session) {
         )
       ) |>
       layout(
-        xaxis = list(title = "Lag Waktu (Hari)"),
-        yaxis = list(title = "Korelasi Spearman (rho)", range = c(-1.05, 1.05)),
+        xaxis = list(
+          title = "Lag Waktu (Hari)",
+          titlefont = list(color = warna_diagram$teks),
+          tickfont = list(color = warna_diagram$teks),
+          gridcolor = warna_diagram$kisi,
+          linecolor = warna_diagram$kisi
+        ),
+        yaxis = list(
+          title = "Korelasi Spearman (rho)",
+          range = c(-1.05, 1.05),
+          titlefont = list(color = warna_diagram$teks),
+          tickfont = list(color = warna_diagram$teks),
+          gridcolor = warna_diagram$kisi,
+          zerolinecolor = warna_diagram$kisi
+        ),
         shapes = list(
           list(
             type = "line", x0 = -0.5, x1 = 7.5, y0 = 0, y1 = 0,
-            line = list(color = "#94A3B8", width = 1, dash = "dash")
+            line = list(color = "#A7B9AD", width = 1, dash = "dash")
           )
         ),
-        margin = list(t = 15, b = 45, l = 55, r = 20),
+        annotations = list(
+          list(
+            text = "Pola garis: tidak signifikan",
+            x = 1,
+            y = 1.08,
+            xref = "paper",
+            yref = "paper",
+            showarrow = FALSE,
+            xanchor = "right",
+            font = list(size = 10, color = warna_diagram$teks)
+          )
+        ),
+        margin = list(t = 30, b = 45, l = 55, r = 20),
+        font = list(family = "Segoe UI, sans-serif", size = 11, color = warna_diagram$teks),
+        bargap = 0.28,
+        hoverlabel = list(bgcolor = warna_diagram$putih, bordercolor = warna_diagram$sekunder),
         plot_bgcolor = "#FFFFFF",
         paper_bgcolor = "#FFFFFF"
       ) |>
@@ -1623,11 +1745,14 @@ server <- function(input, output, session) {
       x = ~api_lag,
       y = ~pm25,
       color = ~kondisi_hujan,
-      colors = c("Hari Kering (≤1 mm)" = "#1F3A5F", "Hari Hujan (>1 mm)" = "#0284C7"),
+      colors = c(
+        "Hari Kering (≤1 mm)" = warna_diagram$primer,
+        "Hari Hujan (>1 mm)" = warna_diagram$mint
+      ),
       type = "scatter",
       mode = "markers",
       height = 310,
-      marker = list(size = 7.5, opacity = 0.8, line = list(color = "#0F172A", width = 0.5)),
+      marker = list(size = 8, opacity = 0.82, line = list(color = warna_diagram$putih, width = 1)),
       hoverinfo = "text",
       text = ~sprintf(
         "<b>%s</b><br>%s: %s<br>AQI PM2,5: %s<br>Curah Hujan: %s mm",
@@ -1646,14 +1771,26 @@ server <- function(input, output, session) {
         y = ~y_smooth,
         name = "Tren LOESS",
         inherit = FALSE,
-        line = list(color = "#D00000", width = 2.2),
+        line = list(color = warna_diagram$sekunder, width = 2.4),
         hoverinfo = "none"
       )
     }
     
     p |> layout(
-      xaxis = list(title = label_api, showgrid = TRUE, gridcolor = "#F1F5F9"),
-      yaxis = list(title = "AQI PM2,5", showgrid = TRUE, gridcolor = "#F1F5F9"),
+      xaxis = list(
+        title = label_api,
+        showgrid = TRUE,
+        gridcolor = warna_diagram$kisi,
+        titlefont = list(color = warna_diagram$teks),
+        tickfont = list(color = warna_diagram$teks)
+      ),
+      yaxis = list(
+        title = "AQI PM2,5",
+        showgrid = TRUE,
+        gridcolor = warna_diagram$kisi,
+        titlefont = list(color = warna_diagram$teks),
+        tickfont = list(color = warna_diagram$teks)
+      ),
       shapes = list(
         list(
           type = "line", x0 = min(df_plot$api_lag), x1 = max(df_plot$api_lag),
@@ -1665,6 +1802,8 @@ server <- function(input, output, session) {
         )
       ),
       legend = list(orientation = "h", x = 0, y = 1.12),
+      font = list(family = "Segoe UI, sans-serif", size = 11, color = warna_diagram$teks),
+      hoverlabel = list(bgcolor = warna_diagram$putih, bordercolor = warna_diagram$sekunder),
       margin = list(t = 25, b = 45, l = 55, r = 20),
       plot_bgcolor = "#FFFFFF",
       paper_bgcolor = "#FFFFFF"
@@ -1950,9 +2089,7 @@ server <- function(input, output, session) {
       mutate(pred_api = if (input$lag_api > 0) api_lag else api_nilai) |>
       filter(!is.na(pm25), !is.na(pred_api))
     if (nrow(df) < 10) {
-      plot.new()
-      text(0.5, 0.5, "Data tidak cukup untuk plot diagnostik", cex = 1.2)
-      return()
+      return(plot_kosong("Data tidak cukup untuk plot diagnostik"))
     }
     
     kandidat_cuaca <- c("hujan_mm", "suhu_c", "angin_maks")
@@ -1961,9 +2098,79 @@ server <- function(input, output, session) {
     }, logical(1))]
     f_diag <- stats::as.formula(paste("pm25 ~", paste(c("pred_api", cuaca_valid), collapse = " + ")))
     fit <- stats::lm(f_diag, data = df)
-    
-    par(mfrow = c(2, 2), mar = c(4.2, 4.2, 2.5, 1.5), oma = c(0, 0, 0, 0))
-    plot(fit, which = 1:4, pch = 16, col = adjustcolor("#1F3A5F", alpha.f = 0.65))
+
+    residual_standar <- stats::rstandard(fit)
+    qq <- stats::qqnorm(residual_standar, plot.it = FALSE)
+    panel_levels <- c(
+      "Residual vs fitted",
+      "Normal Q-Q",
+      "Scale-location",
+      "Residual vs leverage"
+    )
+    df_diag <- dplyr::bind_rows(
+      tibble::tibble(
+        panel = panel_levels[1],
+        x = stats::fitted(fit),
+        y = stats::residuals(fit)
+      ),
+      tibble::tibble(
+        panel = panel_levels[2],
+        x = qq$x,
+        y = qq$y
+      ),
+      tibble::tibble(
+        panel = panel_levels[3],
+        x = stats::fitted(fit),
+        y = sqrt(abs(residual_standar))
+      ),
+      tibble::tibble(
+        panel = panel_levels[4],
+        x = stats::hatvalues(fit),
+        y = residual_standar
+      )
+    ) |>
+      mutate(panel = factor(panel, levels = panel_levels)) |>
+      filter(is.finite(x), is.finite(y))
+
+    df_garis_nol <- tibble::tibble(
+      panel = factor(panel_levels[c(1, 4)], levels = panel_levels),
+      y = 0
+    )
+    df_garis_qq <- tibble::tibble(
+      panel = factor(panel_levels[2], levels = panel_levels),
+      intercept = 0,
+      slope = 1
+    )
+
+    ggplot(df_diag, aes(x = x, y = y)) +
+      geom_hline(
+        data = df_garis_nol,
+        aes(yintercept = y),
+        inherit.aes = FALSE,
+        color = warna_diagram$sekunder,
+        linetype = "dashed",
+        linewidth = 0.4
+      ) +
+      geom_abline(
+        data = df_garis_qq,
+        aes(intercept = intercept, slope = slope),
+        inherit.aes = FALSE,
+        color = warna_diagram$sekunder,
+        linetype = "dashed",
+        linewidth = 0.4
+      ) +
+      geom_point(color = warna_diagram$mint, alpha = 0.75, size = 1.4) +
+      geom_smooth(
+        data = dplyr::filter(df_diag, panel != "Normal Q-Q"),
+        method = "loess",
+        formula = y ~ x,
+        se = FALSE,
+        color = warna_diagram$primer,
+        linewidth = 0.6
+      ) +
+      facet_wrap(~panel, scales = "free", ncol = 2) +
+      labs(x = NULL, y = NULL) +
+      tema_diagram
   })
   
   output$plot_acf <- renderPlot({
@@ -1971,9 +2178,7 @@ server <- function(input, output, session) {
       mutate(pred_api = if (input$lag_api > 0) api_lag else api_nilai) |>
       filter(!is.na(pm25), !is.na(pred_api))
     if (nrow(df) < 10) {
-      plot.new()
-      text(0.5, 0.5, "Data tidak cukup untuk plot ACF", cex = 1.2)
-      return()
+      return(plot_kosong("Data tidak cukup untuk plot ACF"))
     }
     
     kandidat_cuaca <- c("hujan_mm", "suhu_c", "angin_maks")
@@ -1983,17 +2188,43 @@ server <- function(input, output, session) {
     f_diag <- stats::as.formula(paste("pm25 ~", paste(c("pred_api", cuaca_valid), collapse = " + ")))
     fit <- stats::lm(f_diag, data = df)
     res <- residuals(fit)
-    
-    par(mar = c(4.2, 4.2, 2.5, 1.5))
-    stats::acf(
-      res,
-      lag.max = 14,
-      main = "ACF Residual: Deteksi Dependensi Temporal",
-      ylab = "Autokorelasi",
-      xlab = "Lag Waktu (Hari)",
-      col = "#1F3A5F",
-      lwd = 2
+    acf_res <- stats::acf(res, lag.max = 14, plot = FALSE)
+    df_acf <- tibble::tibble(
+      lag = as.numeric(acf_res$lag)[-1],
+      korelasi = as.numeric(acf_res$acf)[-1]
     )
+    batas_signifikan <- stats::qnorm(0.975) / sqrt(length(res))
+
+    ggplot(df_acf, aes(x = lag, y = korelasi)) +
+      geom_hline(
+        yintercept = 0,
+        color = warna_diagram$kisi,
+        linewidth = 0.5
+      ) +
+      geom_hline(
+        yintercept = c(-batas_signifikan, batas_signifikan),
+        color = warna_diagram$mint,
+        linetype = "dashed",
+        linewidth = 0.6
+      ) +
+      geom_segment(
+        aes(xend = lag, y = 0, yend = korelasi),
+        color = warna_diagram$primer,
+        linewidth = 1
+      ) +
+      geom_point(color = warna_diagram$primer, size = 2) +
+      scale_x_continuous(breaks = 0:14, limits = c(0, 14)) +
+      scale_y_continuous(
+        breaks = seq(-1, 1, by = 0.5),
+        limits = c(-1, 1),
+        expand = expansion(mult = c(0.02, 0.02))
+      ) +
+      labs(
+        title = "ACF Residual: Deteksi Dependensi Temporal",
+        x = "Lag Waktu (Hari)",
+        y = "Autokorelasi"
+      ) +
+      tema_diagram
   })
   
   # --- TAB 7: METODOLOGI ---
@@ -2004,7 +2235,7 @@ server <- function(input, output, session) {
       
       tags$div(
         class = "card p-3 mb-3",
-        tags$h5(style = "color: #1F3A5F; font-weight: 700;", "1. Sumber Data dan Karakteristik Sensor"),
+        tags$h5(style = paste0("color: ", warna_diagram$primer, "; font-weight: 700;"), "1. Sumber Data dan Karakteristik Sensor"),
         tags$ul(
           tags$li(
             tags$strong("Kualitas Udara: "),
@@ -2025,7 +2256,7 @@ server <- function(input, output, session) {
       
       tags$div(
         class = "card p-3 mb-3",
-        tags$h5(style = "color: #1F3A5F; font-weight: 700;", "2. Agregasi Spasial dan Penyelarasan Temporal"),
+        tags$h5(style = paste0("color: ", warna_diagram$primer, "; font-weight: 700;"), "2. Agregasi Spasial dan Penyelarasan Temporal"),
         tags$ul(
           tags$li(
             tags$strong("Radius Pengamatan Spasial: "),
@@ -2044,7 +2275,7 @@ server <- function(input, output, session) {
       
       tags$div(
         class = "card p-3 mb-3",
-        tags$h5(style = "color: #1F3A5F; font-weight: 700;", "3. Metode Statistik & Diagnostik Ekonometrika"),
+        tags$h5(style = paste0("color: ", warna_diagram$primer, "; font-weight: 700;"), "3. Metode Statistik & Diagnostik Ekonometrika"),
         tags$ul(
           tags$li(
             tags$strong("Uji Non-Parametrik: "),
